@@ -7,59 +7,77 @@ import { exportToCsv } from '@/lib/exportCsv'
 import type { FleetOverview } from '@/types'
 
 interface Props {
-  vehicles: FleetOverview[]; page: number; totalPages: number; totalCount: number
+  vehicles: FleetOverview[]; page: number; perPage: number
+  totalPages: number; totalCount: number
   search: string; sort: string; dir: boolean
+  fStatus: string; fFleet: string; fMeter: string; fTab: string
 }
 
 const ALL_COLS = [
   { key: 'vehicle_number',             label: 'Vehicle #',    defaultVisible: true  },
   { key: 'fleet_id',                   label: 'Fleet',        defaultVisible: true  },
-  { key: 'office',                     label: 'Office',       defaultVisible: true  },
   { key: 'online_status',              label: 'Status',       defaultVisible: true  },
   { key: 'driver_app_version',         label: 'Driver App',   defaultVisible: true  },
   { key: 'pim_app_version',            label: 'PIM App',      defaultVisible: true  },
-  { key: 'meter_status',               label: 'Meter',        defaultVisible: true  },
   { key: 'driver_tablet_phone_number', label: 'Driver Phone', defaultVisible: true  },
   { key: 'pim_phone_number',           label: 'PIM Phone',    defaultVisible: true  },
+  { key: 'meter_status',               label: 'Meter',        defaultVisible: true  },
   { key: 'rfid',                       label: 'RFID',         defaultVisible: true  },
-  { key: 'device_name',                label: 'Device Name',  defaultVisible: true  },
-  { key: 'verizon_user',               label: 'Verizon User', defaultVisible: true  },
-  { key: 'monthly_usage_gb',           label: 'Usage GB',     defaultVisible: true  },
   { key: 'sheet_tab',                  label: 'Tab',          defaultVisible: true  },
-  { key: 'meter_bluetooth_name',       label: 'Meter BT',     defaultVisible: false },
+  { key: 'device_name',                label: 'Device',       defaultVisible: false },
+  { key: 'monthly_usage_gb',           label: 'Usage GB',     defaultVisible: false },
 ]
 
-// Columns that support dropdown filtering
-const FILTER_OPTIONS: Record<string, { label: string; value: string }[]> = {
-  office:        [{ label: 'ASC', value: 'ASC' }, { label: 'CYC', value: 'CYC' }, { label: 'SDY', value: 'SDY' }, { label: 'DEN', value: 'DEN' }],
-  fleet_id:      [{ label: 'C', value: 'C' }, { label: 'D', value: 'D' }, { label: 'G', value: 'G' }, { label: 'E', value: 'E' }, { label: 'L', value: 'L' }, { label: 'S', value: 'S' }, { label: 'Y', value: 'Y' }, { label: 'U', value: 'U' }],
+// Columns with a fixed set of values — get server-side dropdown filters
+const FILTER_COLS: Record<string, { label: string; value: string }[]> = {
   online_status: [{ label: 'Online', value: 'Online' }, { label: 'Offline', value: 'Offline' }],
+  fleet_id:      [
+    { label: 'C (CYC)', value: 'C' }, { label: 'D (DEN)', value: 'D' }, { label: 'G (SDY)', value: 'G' },
+    { label: 'E (ASC)', value: 'E' }, { label: 'L (ASC)', value: 'L' }, { label: 'S (ASC)', value: 'S' },
+    { label: 'Y (ASC)', value: 'Y' }, { label: 'U (ASC)', value: 'U' },
+  ],
   meter_status:  [{ label: 'Active', value: 'Active' }, { label: 'Inactive', value: 'Inactive' }],
   sheet_tab:     [{ label: 'Active', value: 'Active Vehicles' }, { label: 'Test', value: 'Test Vehicles' }, { label: 'Surrendered', value: 'Surrenders' }],
 }
 
-export default function VehiclesTable({ vehicles, page, totalPages, totalCount, search, sort, dir }: Props) {
+// Map col key → URL param name
+const COL_TO_PARAM: Record<string, string> = {
+  online_status: 'f_status',
+  fleet_id:      'f_fleet',
+  meter_status:  'f_meter',
+  sheet_tab:     'f_tab',
+}
+
+const PER_PAGE_OPTIONS = [25, 50, 100]
+
+export default function VehiclesTable({ vehicles, page, perPage, totalPages, totalCount, search, sort, dir, fStatus, fFleet, fMeter, fTab }: Props) {
   const [, startTransition] = useTransition()
-  const router              = useRouter()
-  const pathname            = usePathname()
-  const [selectedVehicle, setSelectedVehicle] = useState<FleetOverview | null>(null)
-  const [localQ,   setLocalQ]      = useState(search)
+  const router     = useRouter()
+  const pathname   = usePathname()
+  const [localQ,   setLocalQ]   = useState(search)
+  const [panel,    setPanel]    = useState<FleetOverview | null>(null)
   const [visibleCols, setVisibleCols] = useState<string[]>(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
-  const [colFilters, setColFilters] = useState<Record<string, string>>({})
 
   useEffect(() => { setLocalQ(search) }, [search])
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
-    const p = new URLSearchParams({ q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', ...overrides })
+    const base: Record<string, string> = {
+      q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc',
+      per_page: String(perPage),
+      f_status: fStatus, f_fleet: fFleet, f_meter: fMeter, f_tab: fTab,
+    }
+    const p = new URLSearchParams({ ...base, ...overrides })
+    // Remove empty filter params for clean URLs
+    ;['f_status','f_fleet','f_meter','f_tab','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
     startTransition(() => router.push(`${pathname}?${p.toString()}`))
-  }, [search, page, sort, dir, pathname, router])
-
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault(); nav({ q: localQ, page: '0' })
-  }
+  }, [search, page, sort, dir, perPage, fStatus, fFleet, fMeter, fTab, pathname, router])
 
   function handleSort(col: string) {
-    nav({ sort: col, dir: sort === col && dir ? 'desc' : 'asc' })
+    nav({ sort: col, dir: sort === col && dir ? 'desc' : 'asc', page: '0' })
+  }
+
+  function handleFilter(param: string, value: string) {
+    nav({ [param]: value, page: '0' })
   }
 
   function SortIcon({ col }: { col: string }) {
@@ -68,65 +86,71 @@ export default function VehiclesTable({ vehicles, page, totalPages, totalCount, 
   }
 
   const displayCols = ALL_COLS.filter(c => visibleCols.includes(c.key))
-
-  // Client-side column filtering on top of server-side data
-  const filtered = vehicles.filter(v => {
-    for (const [key, val] of Object.entries(colFilters)) {
-      if (!val) continue
-      const row = v as unknown as Record<string, unknown>
-      const cell = String(row[key] ?? '').toLowerCase()
-      if (!cell.includes(val.toLowerCase())) return false
-    }
-    return true
-  })
+  const activeFilters = [fStatus, fFleet, fMeter, fTab].filter(Boolean)
 
   function cellValue(v: FleetOverview, key: string): React.ReactNode {
-    const val = (v as unknown as Record<string, unknown>)[key]
     switch (key) {
       case 'vehicle_number': return <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{v.vehicle_number}</span>
-      case 'fleet_id':       return <span className="badge badge-gray">{String(val ?? '').toUpperCase()}</span>
-      case 'office':         return val ? <span className="badge badge-gray">{String(val)}</span> : <span className="text-dim">—</span>
+      case 'fleet_id':       return <span className="badge badge-gray">{String(v.fleet_id ?? '').toUpperCase()}</span>
       case 'online_status': {
-        const s = String(val ?? '').toLowerCase()
+        const s = String(v.online_status ?? '').toLowerCase()
         const color = s.startsWith('online') ? 'badge-green' : s.startsWith('offline') ? 'badge-amber' : 'badge-gray'
-        return <span className={`badge ${color}`}>{String(val ?? '—').split(' -')[0]}</span>
+        return <span className={`badge ${color}`}>{v.online_status?.split(' -')[0] ?? '—'}</span>
       }
-      case 'monthly_usage_gb': return val != null ? <span>{Number(val).toFixed(1)} GB</span> : <span className="text-dim">—</span>
+      case 'meter_status': {
+        const s = String(v.meter_status ?? '').toLowerCase()
+        return <span className={`badge ${s === 'active' ? 'badge-green' : s === 'inactive' ? 'badge-gray' : 'badge-gray'}`}>{v.meter_status ?? '—'}</span>
+      }
       case 'sheet_tab': {
-        const t = String(val ?? '')
-        return <span className="badge badge-gray" style={{ fontSize: 10 }}>{t === 'Active Vehicles' ? 'Active' : t === 'Test Vehicles' ? 'Test' : t === 'Surrenders' ? 'Surrendered' : t}</span>
+        const s = String(v.sheet_tab ?? '')
+        return <span className="badge badge-gray">{s === 'Active Vehicles' ? 'Active' : s === 'Test Vehicles' ? 'Test' : s === 'Surrenders' ? 'Surrendered' : s}</span>
       }
-      default: return val ? <span style={{ fontSize: 12 }}>{String(val)}</span> : <span className="text-dim">—</span>
+      default: {
+        const val = (v as unknown as Record<string, unknown>)[key]
+        return val ? <span style={{ fontSize: 12 }}>{String(val)}</span> : <span className="text-dim">—</span>
+      }
     }
   }
 
-  const activeFilters = Object.values(colFilters).filter(Boolean).length
+  const hasFilters = displayCols.some(c => !!FILTER_COLS[c.key])
 
   return (
     <>
-      {selectedVehicle && <VehiclePanel vehicle={selectedVehicle} onClose={() => setSelectedVehicle(null)} />}
+      {panel && <VehiclePanel vehicle={panel} onClose={() => setPanel(null)} onSaved={updated => setPanel(updated)} />}
 
-      <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        <div className="search-wrap" style={{ flex: '1 1 220px' }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => setLocalQ(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
-        </div>
-        {activeFilters > 0 && (
-          <button type="button" className="btn-secondary btn-sm" style={{ height: 34, fontSize: 11 }}
-            onClick={() => setColFilters({})}>
-            Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
+        {/* Search */}
+        <form style={{ flex: '1 1 260px' }} onSubmit={e => { e.preventDefault(); nav({ q: localQ, page: '0' }) }}>
+          <div className="search-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input value={localQ} onChange={e => setLocalQ(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
+          </div>
+        </form>
+
+        {/* Per-page selector */}
+        <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
+          style={{ height: 34, fontSize: 12, padding: '0 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', cursor: 'pointer' }}>
+          {PER_PAGE_OPTIONS.map(n => <option key={n} value={n}>{n} per page</option>)}
+        </select>
+
+        {/* Clear filters */}
+        {activeFilters.length > 0 && (
+          <button className="btn-secondary btn-sm" style={{ height: 34 }}
+            onClick={() => nav({ f_status: '', f_fleet: '', f_meter: '', f_tab: '', page: '0' })}>
+            Clear {activeFilters.length} filter{activeFilters.length > 1 ? 's' : ''}
           </button>
         )}
+
         <ColumnPicker storageKey="vehicles-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
-        <button type="button" className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
-          onClick={() => exportToCsv('vehicles', filtered as unknown as Record<string,unknown>[], displayCols.map(c => ({ key: c.key, label: c.label })))}>
+        <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+          onClick={() => exportToCsv('vehicles', vehicles as unknown as Record<string,unknown>[], displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
         </button>
-      </form>
+      </div>
 
       <div className="card">
-        <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+        <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 240px)' }}>
           <table>
             <thead>
               <tr>
@@ -138,26 +162,31 @@ export default function VehiclesTable({ vehicles, page, totalPages, totalCount, 
                   </th>
                 ))}
               </tr>
-              {/* Column filter row — dropdowns only, no text inputs */}
-              {displayCols.some(c => !!FILTER_OPTIONS[c.key]) && (
+              {/* Filter row — only for columns with known value sets */}
+              {hasFilters && (
                 <tr>
-                  {displayCols.map(col => (
-                    <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
-                      {FILTER_OPTIONS[col.key] ? (
-                        <select value={colFilters[col.key] ?? ''} onChange={e => setColFilters(f => ({ ...f, [col.key]: e.target.value }))}
-                          style={{ width: '100%', fontSize: 10, height: 22, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)' }}>
-                          <option value="">All</option>
-                          {FILTER_OPTIONS[col.key].map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
-                      ) : <div />}
-                    </th>
-                  ))}
+                  {displayCols.map(col => {
+                    const param   = COL_TO_PARAM[col.key]
+                    const opts    = FILTER_COLS[col.key]
+                    const current = param === 'f_status' ? fStatus : param === 'f_fleet' ? fFleet : param === 'f_meter' ? fMeter : param === 'f_tab' ? fTab : ''
+                    return (
+                      <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
+                        {opts && param ? (
+                          <select value={current} onChange={e => handleFilter(param, e.target.value)}
+                            style={{ width: '100%', fontSize: 11, height: 24, background: current ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${current ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: current ? 'var(--accent)' : 'var(--text)', fontWeight: current ? 600 : 400, cursor: 'pointer' }}>
+                            <option value="">All</option>
+                            {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        ) : <div />}
+                      </th>
+                    )
+                  })}
                 </tr>
               )}
             </thead>
             <tbody>
-              {filtered.map(v => (
-                <tr key={v.vehicle_id} onClick={() => setSelectedVehicle(v)} style={{ cursor: 'pointer' }}>
+              {vehicles.map(v => (
+                <tr key={v.vehicle_id} onClick={() => setPanel(v)} style={{ cursor: 'pointer' }}>
                   {displayCols.map(c => (
                     <td key={c.key} style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {cellValue(v, c.key)}
@@ -165,9 +194,9 @@ export default function VehiclesTable({ vehicles, page, totalPages, totalCount, 
                   ))}
                 </tr>
               ))}
-              {filtered.length === 0 && (
+              {vehicles.length === 0 && (
                 <tr><td colSpan={displayCols.length} style={{ textAlign: 'center', padding: 32, color: 'var(--text3)' }}>
-                  {activeFilters > 0 ? 'No vehicles match the active column filters.' : 'No vehicles found.'}
+                  {activeFilters.length > 0 ? 'No vehicles match the active filters.' : 'No vehicles found.'}
                 </td></tr>
               )}
             </tbody>
@@ -175,15 +204,17 @@ export default function VehiclesTable({ vehicles, page, totalPages, totalCount, 
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
-          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text3)' }}>{totalCount.toLocaleString()} total · page {page + 1} of {totalPages}</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: String(page - 1) })}>← Prev</button>
-              <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(page + 1) })}>Next →</button>
-            </div>
+        <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+            {totalCount.toLocaleString()} total · page {page + 1} of {totalPages || 1}
+          </span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: '0' })}>«</button>
+            <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: String(page - 1) })}>← Prev</button>
+            <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(page + 1) })}>Next →</button>
+            <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(totalPages - 1) })}>»</button>
           </div>
-        )}
+        </div>
       </div>
     </>
   )

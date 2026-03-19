@@ -3,63 +3,71 @@ import VehiclesTable from '@/components/VehiclesTable'
 import type { FleetOverview } from '@/types'
 import { getOfficesFromParam, getTabsFromParam, getAscFleetsFromParam, getFleetIdsFromFilters, SHEET_TABS } from '@/lib/filters'
 
-const PER_PAGE = 50
-
-interface SearchParams {
-  page?: string; q?: string; sort?: string; dir?: string
-  offices?: string; tabs?: string; asc_fleets?: string
-}
-
+const DEFAULT_PER_PAGE = 50
 const SORTABLE = ['vehicle_number','fleet_id','office','online_status','driver_app_version',
   'pim_app_version','meter_status','driver_tablet_phone_number','pim_phone_number',
   'rfid','device_name','verizon_user','monthly_usage_gb']
 
+interface SearchParams {
+  page?: string; q?: string; sort?: string; dir?: string; per_page?: string
+  offices?: string; tabs?: string; asc_fleets?: string
+  f_status?: string; f_fleet?: string; f_meter?: string; f_tab?: string
+}
+
 export default async function VehiclesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params  = await searchParams
+  const perPage = Math.min(200, Math.max(10, parseInt(params.per_page ?? String(DEFAULT_PER_PAGE), 10)))
   const page    = Math.max(0, parseInt(params.page ?? '0', 10))
   const search  = params.q?.trim() ?? ''
   const sort    = SORTABLE.includes(params.sort ?? '') ? params.sort! : 'vehicle_number'
   const dir     = params.dir !== 'desc'
+
+  // Column filters — now server-side
+  const fStatus = params.f_status ?? ''
+  const fFleet  = params.f_fleet  ?? ''
+  const fMeter  = params.f_meter  ?? ''
+  const fTab    = params.f_tab    ?? ''
 
   const offices   = getOfficesFromParam(params.offices)
   const tabs      = getTabsFromParam(params.tabs)
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const allTabs   = tabs.length === SHEET_TABS.length
 
-  // Resolve fleet_ids from office + ASC sub-fleet selection
   const fleetIds = getFleetIdsFromFilters(offices, ascFleets)
-
   const supabase = await createClient()
 
   let query = supabase
     .from('fleet_overview')
     .select('*', { count: 'exact' })
     .order(sort, { ascending: dir })
-    .range(page * PER_PAGE, (page + 1) * PER_PAGE - 1)
+    .range(page * perPage, (page + 1) * perPage - 1)
 
-  // Filter by fleet_id (handles both office and ASC sub-fleet in one shot)
   if (fleetIds !== null) {
-    if (fleetIds.length === 0) {
-      // Nothing selected — return empty
-      query = query.eq('vehicle_number', -1)
-    } else {
-      query = query.in('fleet_id', fleetIds)
-    }
+    if (fleetIds.length === 0) query = query.eq('vehicle_number', -1)
+    else query = query.in('fleet_id', fleetIds)
   }
 
   if (!allTabs) query = query.in('sheet_tab', tabs)
+
+  // Server-side column filters
+  if (fStatus) query = query.ilike('online_status', `${fStatus}%`)
+  if (fFleet)  query = query.eq('fleet_id', fFleet)
+  if (fMeter)  query = query.ilike('meter_status', `${fMeter}%`)
+  if (fTab)    query = query.eq('sheet_tab', fTab)
 
   if (search) {
     const like = `%${search}%`
     if (/^\d+$/.test(search)) {
       query = query.or(
         `vehicle_number.eq.${parseInt(search, 10)},` +
-        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
+        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
+        `driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
         `rfid.ilike.${like},device_name.ilike.${like},verizon_user.ilike.${like}`
       )
     } else {
       query = query.or(
-        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
+        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
+        `driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
         `rfid.ilike.${like},meter_bluetooth_name.ilike.${like},device_name.ilike.${like},` +
         `verizon_user.ilike.${like},fleet_id.ilike.${like},office.ilike.${like}`
       )
@@ -84,12 +92,11 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
       </div>
       <VehiclesTable
         vehicles={(data ?? []) as FleetOverview[]}
-        page={page}
-        totalPages={Math.ceil((count ?? 0) / PER_PAGE)}
+        page={page} perPage={perPage}
+        totalPages={Math.ceil((count ?? 0) / perPage)}
         totalCount={count ?? 0}
-        search={search}
-        sort={sort}
-        dir={dir}
+        search={search} sort={sort} dir={dir}
+        fStatus={fStatus} fFleet={fFleet} fMeter={fMeter} fTab={fTab}
       />
     </div>
   )

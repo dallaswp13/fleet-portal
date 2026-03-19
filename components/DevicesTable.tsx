@@ -9,7 +9,7 @@ import type { FleetOverview } from '@/types'
 
 interface Props {
   devices: Record<string,unknown>[]; page: number; totalPages: number; totalCount: number
-  search: string; sort: string; dir: boolean
+  perPage?: number; search: string; sort: string; dir: boolean
   fType: string; fCompliance: string; fModel: string
 }
 
@@ -32,7 +32,7 @@ function shortOs(s: string | null | undefined) {
   return s ? (s.replace(/^Android\s*/i,'').replace(/\s*\(.*\)/,'').trim() || s) : '—'
 }
 
-export default function DevicesTable({ devices, page, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel }: Props) {
+export default function DevicesTable({ devices, page, perPage = 50, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
@@ -41,7 +41,7 @@ export default function DevicesTable({ devices, page, totalPages, totalCount, se
   const [visibleCols, setVisibleCols] = useState(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
-    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', f_type: fType, f_compliance: fCompliance, f_model: fModel }
+    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel }
     const p    = new URLSearchParams({ ...base, ...overrides })
     // Remove empty filter params
     ;['f_type','f_compliance','f_model'].forEach(k => { if (!p.get(k)) p.delete(k) })
@@ -93,7 +93,11 @@ export default function DevicesTable({ devices, page, totalPages, totalCount, se
             Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
           </button>
         )}
-        <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
+        <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
+          style={{ height: 34, fontSize: 12, padding: '0 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', cursor: 'pointer' }}>
+          {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+        </select>
+                <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
         <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('devices', devices, displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -168,8 +172,10 @@ export default function DevicesTable({ devices, page, totalPages, totalCount, se
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: 'var(--text3)' }}>{totalCount.toLocaleString()} devices · page {page + 1} of {totalPages}</span>
             <div style={{ display: 'flex', gap: 6 }}>
+              <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: '0' })}>«</button>
               <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: String(page - 1) })}>← Prev</button>
               <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(page + 1) })}>Next →</button>
+              <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(totalPages - 1) })}>»</button>
             </div>
           </div>
         )}

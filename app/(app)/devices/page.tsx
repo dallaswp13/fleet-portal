@@ -3,16 +3,17 @@ import { Suspense } from 'react'
 import DevicesTable from '@/components/DevicesTable'
 import { getOfficesFromParam, getAscFleetsFromParam, getFleetIdsFromFilters } from '@/lib/filters'
 
-const PER_PAGE = 100
+const DEFAULT_PER_PAGE = 50
 
 interface SearchParams {
   page?: string; q?: string; sort?: string; dir?: string
   offices?: string; asc_fleets?: string; tabs?: string
-  f_type?: string; f_compliance?: string; f_model?: string
+  f_type?: string; f_compliance?: string; f_model?: string; per_page?: string
 }
 
 export default async function DevicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params    = await searchParams
+  const perPage   = Math.min(200, Math.max(10, parseInt(params.per_page ?? String(DEFAULT_PER_PAGE), 10)))
   const page      = Math.max(0, parseInt(params.page ?? '0', 10))
   const search    = params.q?.trim() ?? ''
   const sort      = params.sort ?? 'device_name'
@@ -46,7 +47,7 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     .from('devices')
     .select('*', { count: 'exact' })
     .order(sort, { ascending: dir })
-    .range(page * PER_PAGE, (page + 1) * PER_PAGE - 1)
+    .range(page * perPage, (page + 1) * perPage - 1)
 
   if (allowedNameKeys !== null) {
     if (allowedNameKeys.length === 0) {
@@ -88,7 +89,8 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
         <DevicesTable
           devices={(data ?? []) as Record<string, unknown>[]}
           page={page}
-          totalPages={Math.ceil((count ?? 0) / PER_PAGE)}
+          perPage={perPage}
+          totalPages={Math.ceil((count ?? 0) / perPage)}
           totalCount={count ?? 0}
           search={search} sort={sort} dir={dir}
           fType={params.f_type ?? ''} fCompliance={params.f_compliance ?? ''} fModel={params.f_model ?? ''}
