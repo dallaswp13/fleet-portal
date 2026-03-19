@@ -42,11 +42,10 @@ const FILTER_COLS: Record<string, { label: string; value: string }[]> = {
 
 // Map col key → URL param name
 const SEL = (active: boolean): React.CSSProperties => ({
-  width: '100%', fontSize: 11, height: 28, paddingLeft: 6, paddingRight: 2,
   background: active ? 'var(--accent-dim)' : 'var(--bg2)',
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  borderRadius: 4, color: active ? 'var(--accent)' : 'var(--text)',
-  fontWeight: active ? 600 : 400, cursor: 'pointer',
+  color: active ? 'var(--accent)' : 'var(--text)',
+  fontWeight: active ? 600 : 400,
 })
 
 const COL_TO_PARAM: Record<string, string> = {
@@ -133,7 +132,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
     <>
       {panel && <VehiclePanel vehicle={panel} onClose={() => setPanel(null)} onSaved={updated => setPanel(updated)} />}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 260px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
@@ -141,7 +140,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
 
         {/* Per-page selector */}
         <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
-          className="btn-secondary btn-sm" style={{ height: 34, fontSize: 12, padding: '0 8px', cursor: 'pointer' }}>
+          className="btn-secondary toolbar-select">
           {PER_PAGE_OPTIONS.map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
 

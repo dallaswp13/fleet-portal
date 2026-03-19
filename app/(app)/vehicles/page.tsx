@@ -61,13 +61,11 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
       query = query.or(
         `vehicle_number.eq.${parseInt(search, 10)},` +
         `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
-        `driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
         `rfid.ilike.${like},device_name.ilike.${like},verizon_user.ilike.${like}`
       )
     } else {
       query = query.or(
         `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
-        `driver_phone_norm.ilike.${like},pim_phone_norm.ilike.${like},` +
         `rfid.ilike.${like},meter_bluetooth_name.ilike.${like},device_name.ilike.${like},` +
         `verizon_user.ilike.${like},fleet_id.ilike.${like},office.ilike.${like}`
       )

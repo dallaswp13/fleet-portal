@@ -83,6 +83,15 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-ghost { background: transparent; color: var(--text2); padding: 6px 10px; }
 .btn-ghost:hover:not(:disabled) { background: var(--bg3); color: var(--text); }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
+/* Compact filter selects used in table header rows */
+select.filter-select {
+  padding: 0 6px;
+  height: 28px;
+  font-size: 11px;
+  line-height: 28px;
+  width: 100%;
+}
+
 .btn-icon { padding: 6px; background: var(--bg3); border: 1px solid var(--border); color: var(--text2); border-radius: var(--radius); }
 .btn-icon:hover { background: var(--bg4); color: var(--text); }
 
@@ -259,3 +268,85 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
 .stat-card-link { text-decoration: none; display: block; }
 .stat-card-hover { cursor: pointer; transition: border-color 0.15s; }
 .stat-card-hover:hover { border-color: var(--accent); }
+
+/* Toolbar select (per-page, etc.) - matches button height exactly */
+select.toolbar-select {
+  height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  width: auto;
+  cursor: pointer;
+}
+
+/* ── Mobile Responsive ───────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  :root { --sidebar-w: 0px; }
+
+  .app-shell { flex-direction: column; height: 100dvh; }
+
+  /* Sidebar becomes a bottom nav on mobile */
+  .sidebar {
+    width: 100% !important;
+    height: auto;
+    border-right: none;
+    border-top: 1px solid var(--border);
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-shrink: 0;
+    order: 2;
+    padding: 0;
+  }
+  .sidebar-logo { display: none; }
+  .sidebar-section { display: contents; }
+  .sidebar-section-label { display: none; }
+  .sidebar-sections-wrap { display: flex; flex-direction: row; width: 100%; }
+  .nav-item {
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px;
+    font-size: 10px;
+    white-space: nowrap;
+    border-radius: 0;
+    border: none !important;
+    flex-shrink: 0;
+  }
+  .nav-item span { font-size: 18px; }
+  .nav-item.active { background: var(--bg3); border-bottom: 2px solid var(--accent) !important; color: var(--accent); }
+
+  .main { order: 1; overflow: hidden; flex: 1; }
+
+  .topbar { padding: 0 12px; gap: 8px; }
+  .topbar h1 { font-size: 16px; }
+
+  .page-content { padding: 12px; }
+  .page-header { flex-direction: column; gap: 8px; align-items: flex-start !important; margin-bottom: 12px; }
+  .page-header h1 { font-size: 20px; }
+
+  /* Tables - horizontal scroll on mobile */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 600px; }
+
+  /* Cards stack better */
+  .card { border-radius: var(--radius); }
+
+  /* Toolbar wraps gracefully */
+  .search-wrap { min-width: 160px !important; }
+
+  /* Vehicle Panel full-screen on mobile */
+  .vehicle-panel-overlay {
+    padding-top: 0 !important;
+    align-items: flex-end !important;
+  }
+  .vehicle-panel-box {
+    max-width: 100% !important;
+    height: 92dvh !important;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-content { padding: 8px; }
+  .page-header h1 { font-size: 18px; }
+  .btn-sm { padding: 4px 8px; font-size: 11px; }
+}

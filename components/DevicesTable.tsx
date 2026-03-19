@@ -33,11 +33,10 @@ function shortOs(s: string | null | undefined) {
 }
 
 const SEL = (active: boolean): React.CSSProperties => ({
-  width: '100%', fontSize: 11, height: 28, paddingLeft: 6, paddingRight: 2,
   background: active ? 'var(--accent-dim)' : 'var(--bg2)',
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  borderRadius: 4, color: active ? 'var(--accent)' : 'var(--text)',
-  fontWeight: active ? 600 : 400, cursor: 'pointer',
+  color: active ? 'var(--accent)' : 'var(--text)',
+  fontWeight: active ? 600 : 400,
 })
 
 export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel }: Props) {
@@ -108,7 +107,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
           </button>
         )}
         <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
-          className="btn-secondary btn-sm" style={{ height: 34, fontSize: 12, padding: '0 8px', cursor: 'pointer' }}>
+          className="btn-secondary toolbar-select">
           {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
         <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />

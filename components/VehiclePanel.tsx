@@ -275,7 +275,7 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
   const totalUsage = (v.monthly_usage_gb ?? 0) + (v.pim_monthly_usage_gb ?? 0)
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 48, background: 'rgba(0,0,0,0.5)' }}
+    <div className="vehicle-panel-overlay" style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 48, background: 'rgba(0,0,0,0.5)' }}
       onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: 740, height: 'min(740px,90vh)', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-lg)' }}>
 

@@ -37,6 +37,7 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
         <small>Fleet Management</small>
       </div>
 
+      <div className="sidebar-sections-wrap">
       <div className="sidebar-section">
         <div className="sidebar-section-label">Navigation</div>
         {mainNav.map(item => (
@@ -73,6 +74,7 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
           </svg>
           Sign out
         </button>
+      </div>
       </div>
     </aside>
   )
