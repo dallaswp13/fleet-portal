@@ -6,9 +6,10 @@ import { getOfficesFromParam, getAscFleetsFromParam, getFleetIdsFromFilters } fr
 const DEFAULT_PER_PAGE = 50
 
 interface SearchParams {
-  page?: string; q?: string; sort?: string; dir?: string
-  offices?: string; asc_fleets?: string; tabs?: string
-  f_type?: string; f_compliance?: string; f_model?: string; per_page?: string
+  page?: string; q?: string; sort?: string; dir?: string; per_page?: string
+  offices?: string; asc_fleets?: string
+  f_type?: string; f_compliance?: string; f_model?: string
+  f_os?: string; f_policy?: string
 }
 
 export default async function DevicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -22,22 +23,16 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   const offices   = getOfficesFromParam(params.offices)
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const fleetIds  = getFleetIdsFromFilters(offices, ascFleets)
-
   const supabase  = await createClient()
 
-  // Devices don't have fleet_id — join through vehicles via name_key
-  // We filter by fetching device name_keys for matching vehicles first
   let allowedNameKeys: string[] | null = null
   if (fleetIds !== null) {
-    if (fleetIds.length === 0) {
-      // Nothing selected — return empty
-      return (
-        <div className="page-content">
-          <div className="page-header"><div><h1>Devices</h1><p>0 MaaS360 devices</p></div></div>
-          <div className="card"><div style={{ padding: 32, textAlign: 'center', color: 'var(--text3)' }}>No offices selected.</div></div>
-        </div>
-      )
-    }
+    if (fleetIds.length === 0) return (
+      <div className="page-content">
+        <div className="page-header"><div><h1>Devices</h1><p>0 MaaS360 devices</p></div></div>
+        <div className="card"><div style={{ padding: 32, textAlign: 'center', color: 'var(--text3)' }}>No offices selected.</div></div>
+      </div>
+    )
     const { data: vehs } = await supabase
       .from('vehicles').select('vehicle_name_key').in('fleet_id', fleetIds).not('vehicle_name_key', 'is', null)
     allowedNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
@@ -50,25 +45,23 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     .range(page * perPage, (page + 1) * perPage - 1)
 
   if (allowedNameKeys !== null) {
-    if (allowedNameKeys.length === 0) {
-      query = query.eq('device_name', '___NO_MATCH___')
-    } else {
-      query = query.in('name_key', allowedNameKeys)
-    }
+    if (allowedNameKeys.length === 0) query = query.eq('device_name', '___NO_MATCH___')
+    else query = query.in('name_key', allowedNameKeys)
   }
 
-  // Column filters — use explicit filter syntax for type
+  // Type filter — use raw PostgREST filter to avoid chaining issues
   if (params.f_type === 'pim') {
-    // PIM devices have device_name starting with *
     query = query.ilike('device_name', '*%')
   } else if (params.f_type === 'driver') {
-    // Driver devices do NOT start with * and are not null
-    // Use or() to handle both conditions explicitly
-    query = query.not('device_name', 'is', null)
-               .not('device_name', 'ilike', '*%')
+    // device_name does NOT start with * — use filter with not.ilike
+    query = (query as unknown as { filter: (col: string, op: string, val: string) => typeof query })
+      .filter('device_name', 'not.ilike', '*%')
   }
-  if (params.f_compliance)        query = query.ilike('compliance_status', `%${params.f_compliance}%`)
-  if (params.f_model)             query = query.ilike('tablet_model', `%${params.f_model}%`)
+
+  if (params.f_compliance) query = query.ilike('compliance_status', `%${params.f_compliance}%`)
+  if (params.f_model)      query = query.ilike('tablet_model', `%${params.f_model}%`)
+  if (params.f_os)         query = query.ilike('android_os', `%${params.f_os}%`)
+  if (params.f_policy)     query = query.ilike('m360_policy', `%${params.f_policy}%`)
 
   if (search) {
     const like = `%${search}%`
@@ -76,6 +69,17 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   }
 
   const { data, count } = await query
+
+  // Collect distinct values for dropdown filters from current full dataset
+  // (fetch without pagination to get all values for filter dropdowns)
+  const { data: allForFilters } = await supabase
+    .from('devices')
+    .select('android_os, m360_policy')
+    .not('android_os', 'is', null)
+    .limit(3000)
+
+  const osValues     = Array.from(new Set((allForFilters ?? []).map(d => d.android_os).filter(Boolean))).sort() as string[]
+  const policyValues = Array.from(new Set((allForFilters ?? []).map(d => d.m360_policy).filter(Boolean))).sort() as string[]
 
   return (
     <div className="page-content">
@@ -88,12 +92,13 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
       <Suspense fallback={null}>
         <DevicesTable
           devices={(data ?? []) as Record<string, unknown>[]}
-          page={page}
-          perPage={perPage}
+          page={page} perPage={perPage}
           totalPages={Math.ceil((count ?? 0) / perPage)}
           totalCount={count ?? 0}
           search={search} sort={sort} dir={dir}
-          fType={params.f_type ?? ''} fCompliance={params.f_compliance ?? ''} fModel={params.f_model ?? ''}
+          fType={params.f_type ?? ''} fCompliance={params.f_compliance ?? ''}
+          fModel={params.f_model ?? ''} fOs={params.f_os ?? ''} fPolicy={params.f_policy ?? ''}
+          osValues={osValues} policyValues={policyValues}
         />
       </Suspense>
     </div>

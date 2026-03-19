@@ -11,7 +11,8 @@ interface Props {
   devices: Record<string,unknown>[]; page: number; perPage: number
   totalPages: number; totalCount: number
   search: string; sort: string; dir: boolean
-  fType: string; fCompliance: string; fModel: string
+  fType: string; fCompliance: string; fModel: string; fOs: string; fPolicy: string
+  osValues: string[]; policyValues: string[]
 }
 
 const ALL_COLS = [
@@ -39,7 +40,7 @@ const SEL = (active: boolean): React.CSSProperties => ({
   fontWeight: active ? 600 : 400,
 })
 
-export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel }: Props) {
+export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, osValues, policyValues }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
@@ -51,11 +52,11 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
   useEffect(() => { setLocalQ(search) }, [search])
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
-    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel }
+    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel, f_os: fOs, f_policy: fPolicy }
     const p    = new URLSearchParams({ ...base, ...overrides })
-    ;['f_type','f_compliance','f_model','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
+    ;['f_type','f_compliance','f_model','f_os','f_policy','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
     startTransition(() => router.push(`${pathname}?${p.toString()}`))
-  }, [search, page, sort, dir, perPage, fType, fCompliance, fModel, pathname, router])
+  }, [search, page, sort, dir, perPage, fType, fCompliance, fModel, fOs, fPolicy, pathname, router])
 
   function handleSearch(val: string) {
     setLocalQ(val)
@@ -70,8 +71,8 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
     return <span style={{ color: 'var(--accent)', fontSize: 10 }}>{dir ? ' ↑' : ' ↓'}</span>
   }
 
-  const displayCols = ALL_COLS.filter(c => visibleCols.includes(c.key))
-  const activeFilters = [fType, fCompliance, fModel].filter(Boolean).length
+  const displayCols   = ALL_COLS.filter(c => visibleCols.includes(c.key))
+  const activeFilters = [fType, fCompliance, fModel, fOs, fPolicy].filter(Boolean).length
 
   function cellValue(d: Record<string,unknown>, key: string): React.ReactNode {
     const val = d[key]
@@ -102,7 +103,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
         </div>
         {activeFilters > 0 && (
           <button className="btn-secondary btn-sm" style={{ height: 34, fontSize: 11 }}
-            onClick={() => nav({ f_type: '', f_compliance: '', f_model: '', page: '0' })}>
+            onClick={() => nav({ f_type: '', f_compliance: '', f_model: '', f_os: '', f_policy: '', page: '0' })}>
             Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
           </button>
         )}
@@ -132,20 +133,30 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
               <tr>{displayCols.map(col => (
                 <th key={col.key} style={{ padding: '3px 6px', background: 'var(--bg3)' }}>
                   {col.key === 'is_pim' ? (
-                    <select value={fType} onChange={e => nav({ f_type: e.target.value, page: '0' })} style={SEL(!!fType)}>
+                    <select className="filter-select" value={fType} onChange={e => nav({ f_type: e.target.value, page: '0' })} style={SEL(!!fType)}>
                       <option value="">All types</option>
                       <option value="driver">Driver</option>
                       <option value="pim">PIM</option>
                     </select>
                   ) : col.key === 'compliance_status' ? (
-                    <select value={fCompliance} onChange={e => nav({ f_compliance: e.target.value, page: '0' })} style={SEL(!!fCompliance)}>
+                    <select className="filter-select" value={fCompliance} onChange={e => nav({ f_compliance: e.target.value, page: '0' })} style={SEL(!!fCompliance)}>
                       <option value="">All</option>
                       {COMPLIANCE_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   ) : col.key === 'tablet_model' ? (
-                    <input value={fModel} onChange={e => nav({ f_model: e.target.value, page: '0' })}
-                      placeholder="Filter model…"
-                      style={{ width: '100%', fontSize: 11, padding: '2px 6px', height: 28, background: fModel ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${fModel ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: fModel ? 'var(--accent)' : 'var(--text)' }} />
+                    <input className="filter-select" value={fModel} onChange={e => nav({ f_model: e.target.value, page: '0' })}
+                      placeholder="Filter…"
+                      style={{ ...SEL(!!fModel), width: '100%', padding: '0 6px' }} />
+                  ) : col.key === 'android_os' ? (
+                    <select className="filter-select" value={fOs} onChange={e => nav({ f_os: e.target.value, page: '0' })} style={SEL(!!fOs)}>
+                      <option value="">All</option>
+                      {osValues.map(o => <option key={o} value={o}>{shortOs(o)}</option>)}
+                    </select>
+                  ) : col.key === 'm360_policy' ? (
+                    <select className="filter-select" value={fPolicy} onChange={e => nav({ f_policy: e.target.value, page: '0' })} style={SEL(!!fPolicy)}>
+                      <option value="">All</option>
+                      {policyValues.map(o => <option key={o} value={o}>{o}</option>)}
+                    </select>
                   ) : <div />}
                 </th>
               ))}</tr>

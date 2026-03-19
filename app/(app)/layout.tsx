@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
 import ThemeToggle from '@/components/ThemeToggle'
+import ClaudeSupportToggle from '@/components/ClaudeSupportToggle'
 import { Suspense } from 'react'
 import OfficeFilter from '@/components/OfficeFilter'
 
@@ -19,6 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <OfficeFilter />
           </Suspense>
           <div style={{ flex: 1 }} />
+          <ClaudeSupportToggle />
           <ThemeToggle />
         </div>
         <main className="main">

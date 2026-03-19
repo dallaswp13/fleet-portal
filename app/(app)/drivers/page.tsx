@@ -131,7 +131,7 @@ function DriversContent() {
               )}
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>{selected.name ?? '—'}</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Lease #{selected.driver_id} · {selected.fleet_id.toUpperCase()} Fleet · {selected.office ?? '—'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Lease <strong>#{selected.driver_id}</strong> · {selected.fleet_id.toUpperCase()} Fleet · {selected.office ?? '—'}</div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="btn-secondary btn-sm" onClick={() => { setEditing(e => !e); setSaveMsg(null) }}>✏ {editing ? 'Cancel' : 'Edit'}</button>

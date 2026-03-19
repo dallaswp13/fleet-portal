@@ -107,13 +107,9 @@ const QUICK_ACTIONS: QuickAction[] = [
     id: 'new_inbox_rule', icon: '⚙️', title: 'New Inbox Rule', color: '#e67e22',
     description: 'Create an automation rule for incoming SMS messages.',
     href: '/sms',
-  },
-  {
-    id: 'claude_support', icon: '🤖', title: 'Claude Support', color: '#2563eb',
-    description: 'Enable AI-powered support parsing for incoming messages.',
-    toggle: true,
-  },
+  }
 ]
+
 
 /* ── Workflow Modal ────────────────────────────────────────── */
 function WorkflowModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
@@ -327,10 +323,7 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
 export default function ActionsPage() {
   const [active,      setActive]      = useState<QuickAction | null>(null)
   const [issues,      setIssues]      = useState<Issue[]>([])
-  const [claudeOn, setClaudeOn] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('claude-support') !== 'false'
-    return true
-  })
+  const claudeOn = false
   const [newIssueTitle, setNewIssueTitle] = useState('')
   const [addingIssue,   setAddingIssue]  = useState(false)
 
@@ -352,12 +345,7 @@ export default function ActionsPage() {
   }
 
   function handleAction(action: QuickAction) {
-    if (action.toggle) {
-      const next = !claudeOn
-      setClaudeOn(next)
-      if (typeof window !== 'undefined') localStorage.setItem('claude-support', String(next))
-      return
-    }
+    if (action.toggle) { return }  // Claude Support moved to topbar
     if (action.href)   { window.location.href = action.href; return }
     setActive(action)
   }

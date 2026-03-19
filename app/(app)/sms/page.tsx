@@ -82,10 +82,7 @@ export default function SmsPage() {
   const [polling,     setPolling]     = useState(false)
   const [pollMsg,     setPollMsg]     = useState<{ ok: boolean; text: string } | null>(null)
   const [showRules,   setShowRules]   = useState(false)
-  const [claudeOn,    setClaudeOn]    = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('claude-support') !== 'false'
-    return true
-  })
+
   const [showNewRule, setShowNewRule] = useState(false)
   const [selectedMsgs, setSelectedMsgs] = useState<Set<string>>(new Set())
 
@@ -132,14 +129,6 @@ export default function SmsPage() {
     const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(200)
     setMessages((data ?? []) as SmsMessage[])
     setLoadingMsgs(false)
-  }
-
-  function toggleClaude() {
-    const next = !claudeOn
-    setClaudeOn(next)
-    localStorage.setItem('claude-support', String(next))
-    // Persist to DB for sitewide sync
-    createClient().from('app_config').upsert({ key: 'claude_support_enabled', value: String(next) }, { onConflict: 'key' })
   }
 
   async function loadRules() {
@@ -280,12 +269,7 @@ export default function SmsPage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
 
-          <button onClick={toggleClaude}
-            className={claudeOn ? 'btn-primary' : 'btn-secondary'}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            🤖 Claude {claudeOn ? 'On' : 'Off'}
-          </button>
-          <button className="btn-secondary" onClick={() => setShowRules(r => !r)}
+<button className="btn-secondary" onClick={() => setShowRules(r => !r)}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             ⚙️ Rules ({rules.filter(r => r.enabled).length} active)
           </button>
@@ -472,7 +456,7 @@ export default function SmsPage() {
               </button>
             )}
           </div>
-          <span style={{ fontSize: 12, color: 'var(--text3)' }}>{messages.length} messages · click rows to select for rule testing</span>
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>{messages.length} messages · click row to view · click ☐ to select for rule testing</span>
         </div>
         <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           {loadingMsgs ? (
@@ -500,7 +484,7 @@ export default function SmsPage() {
                 {messages.map(m => {
                   const isSelected = selectedMsgs.has(m.id)
                   return (
-                    <tr key={m.id} onDoubleClick={() => openThread(m)} onClick={() => toggleMsgSelect(m.id)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined }} title='Click to select · Double-click to view thread'>
+                    <tr key={m.id} onClick={() => openThread(m)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined }}>
                       <td>
                         <div style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--blue)' : 'var(--border2)'}`,
                           background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
