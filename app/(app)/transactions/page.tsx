@@ -2,27 +2,27 @@ import { createClient } from '@/lib/supabase/server'
 import { Suspense } from 'react'
 import TransactionsTable from '@/components/TransactionsTable'
 
-const PER_PAGE = 200
+const DEFAULT_PER_PAGE = 50
 
 interface SearchParams {
   page?: string; q?: string; sort?: string; dir?: string
-  vehicle?: string
+  vehicle?: string; per_page?: string; f_status?: string
 }
 
 export default async function TransactionsPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params  = await searchParams
+  const perPage = Math.min(200, Math.max(10, parseInt(params.per_page ?? String(DEFAULT_PER_PAGE), 10)))
   const page    = Math.max(0, parseInt(params.page ?? '0', 10))
   const search  = params.q?.trim() ?? ''
   const sort    = params.sort ?? 'transaction_date'
-  const dir     = params.dir !== 'asc'  // default descending (newest first)
+  const dir     = params.dir !== 'asc'
   const vehicle = params.vehicle ?? ''
+  const fStatus = params.f_status ?? ''
 
   const supabase = await createClient()
 
-  // Check if transactions table has any data
   const { count: totalCount } = await supabase
-    .from('transactions')
-    .select('*', { count: 'exact', head: true })
+    .from('transactions').select('*', { count: 'exact', head: true })
 
   if (!totalCount) {
     return (
@@ -33,7 +33,6 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
           <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>No Transactions Yet</h2>
           <p style={{ fontSize: 13, color: 'var(--text2)', maxWidth: 440, margin: '0 auto 24px' }}>
             Upload <code>transactions.csv</code> from your Square Dashboard via Update Database.
-            Transactions will be matched to vehicles by the device name in the CSV.
           </p>
           <a href="/settings?tab=db" className="btn-primary"
             style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -48,9 +47,10 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
     .from('transactions')
     .select('*, vehicles(vehicle_number, fleet_id, office)', { count: 'exact' })
     .order(sort, { ascending: dir })
-    .range(page * PER_PAGE, (page + 1) * PER_PAGE - 1)
+    .range(page * perPage, (page + 1) * perPage - 1)
 
   if (vehicle) query = query.ilike('device_name', `%${vehicle}%`)
+  if (fStatus) query = query.ilike('status', `%${fStatus}%`)
   if (search) {
     const like = `%${search}%`
     query = query.or(`transaction_id.ilike.${like},device_name.ilike.${like},location.ilike.${like},description.ilike.${like},payment_type.ilike.${like}`)
@@ -58,17 +58,9 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   const { data, count } = await query
 
-  // Compute summary stats
-  const { data: stats } = await supabase
-    .from('transactions')
-    .select('amount, status')
-
-  const totalRevenue = (stats ?? [])
-    .filter(t => t.status !== 'REFUNDED')
-    .reduce((s, t) => s + (Number(t.amount) || 0), 0)
-  const totalRefunds = (stats ?? [])
-    .filter(t => t.status === 'REFUNDED')
-    .reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0)
+  const { data: stats } = await supabase.from('transactions').select('amount, status')
+  const totalRevenue = (stats ?? []).filter(t => t.status !== 'REFUNDED').reduce((s, t) => s + (Number(t.amount) || 0), 0)
+  const totalRefunds = (stats ?? []).filter(t => t.status === 'REFUNDED').reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0)
 
   return (
     <div className="page-content">
@@ -85,8 +77,9 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
       <Suspense fallback={null}>
         <TransactionsTable
           transactions={(data ?? []) as Record<string,unknown>[]}
-          page={page} totalPages={Math.ceil((count ?? 0) / PER_PAGE)} totalCount={count ?? 0}
-          search={search} sort={sort} dir={dir} vehicle={vehicle}
+          page={page} perPage={perPage}
+          totalPages={Math.ceil((count ?? 0) / perPage)} totalCount={count ?? 0}
+          search={search} sort={sort} dir={dir} vehicle={vehicle} fStatus={fStatus}
         />
       </Suspense>
     </div>

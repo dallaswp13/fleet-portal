@@ -1,5 +1,5 @@
 'use client'
-import { useState, useCallback, useTransition } from 'react'
+import { useState, useCallback, useTransition, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useVehiclePanel } from '@/components/useVehiclePanel'
 import VehiclePanel from '@/components/VehiclePanel'
@@ -9,8 +9,9 @@ import { exportToCsv } from '@/lib/exportCsv'
 import type { FleetOverview } from '@/types'
 
 interface Props {
-  lines: Record<string,unknown>[]; page: number; totalPages: number; totalCount: number
-  perPage?: number; search: string; sort: string; dir: boolean; activeTab: 'all'|'available'|'staff'
+  lines: Record<string,unknown>[]; page: number; perPage: number
+  totalPages: number; totalCount: number
+  search: string; sort: string; dir: boolean; activeTab: 'all'|'available'|'staff'
   fRole: string; fStatus: string; fVehicle: string
 }
 
@@ -27,22 +28,37 @@ const ALL_COLS = [
   { key: 'account_number',   label: 'Account #',    defaultVisible: false },
 ]
 
-const maxUsage = 20 // cap for usage meter display
+const SEL = (active: boolean): React.CSSProperties => ({
+  width: '100%', fontSize: 11, height: 28, paddingLeft: 6, paddingRight: 2,
+  background: active ? 'var(--accent-dim)' : 'var(--bg2)',
+  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+  borderRadius: 4, color: active ? 'var(--accent)' : 'var(--text)',
+  fontWeight: active ? 600 : 400, cursor: 'pointer',
+})
 
-export default function LinesTable({ lines, page, perPage = 50, totalPages, totalCount, search, sort, dir, activeTab, fRole, fStatus, fVehicle }: Props) {
+export default function LinesTable({ lines, page, perPage, totalPages, totalCount, search, sort, dir, activeTab, fRole, fStatus, fVehicle }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
   const { vehicle: panelVehicle, error: panelError, openByNumber, close } = useVehiclePanel()
   const [localQ,      setLocalQ]      = useState(search)
   const [visibleCols, setVisibleCols] = useState(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { setLocalQ(search) }, [search])
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
     const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), tab: activeTab, f_role: fRole, f_status: fStatus, f_vehicle: fVehicle }
     const p    = new URLSearchParams({ ...base, ...overrides })
-    ;['f_role','f_status','f_vehicle'].forEach(k => { if (!p.get(k)) p.delete(k) })
+    ;['f_role','f_status','f_vehicle','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
     startTransition(() => router.push(`${pathname}?${p.toString()}`))
-  }, [search, page, sort, dir, activeTab, fRole, fStatus, fVehicle, pathname, router])
+  }, [search, page, sort, dir, perPage, activeTab, fRole, fStatus, fVehicle, pathname, router])
+
+  function handleSearch(val: string) {
+    setLocalQ(val)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => nav({ q: val, page: '0' }), 350)
+  }
 
   function handleSort(col: string) { nav({ sort: col, dir: sort === col && dir ? 'desc' : 'asc', page: '0' }) }
 
@@ -51,7 +67,7 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
     return <span style={{ color: 'var(--accent)', fontSize: 10 }}>{dir ? ' ↑' : ' ↓'}</span>
   }
 
-  const displayCols = ALL_COLS.filter(c => visibleCols.includes(c.key))
+  const displayCols   = ALL_COLS.filter(c => visibleCols.includes(c.key))
   const activeFilters = [fRole, fStatus, fVehicle].filter(Boolean).length
 
   function statusColor(s: string | null) {
@@ -73,7 +89,7 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
         ? <span className={`badge ${l.role === 'Driver' ? 'badge-blue' : 'badge-amber'}`} style={{ fontSize: 10 }}>{String(l.role)}</span>
         : <span className="badge badge-gray" style={{ fontSize: 10 }}>Unassigned</span>
       case 'phone_status': return <span className={`badge ${statusColor(l.phone_status as string)}`} style={{ fontSize: 10 }}>{String(l.phone_status ?? 'Unknown')}</span>
-      case 'monthly_usage_gb': return <UsageMeter value={Number(l.monthly_usage_gb ?? 0)} max={maxUsage} />
+      case 'monthly_usage_gb': return <UsageMeter value={Number(l.monthly_usage_gb ?? 0)} max={20} />
       case 'sub_account': return <span style={{ fontSize: 12 }}>{String(l.sub_account ?? l.account_number ?? '—')}</span>
       default: return l[key] ? <span style={{ fontSize: 12 }}>{String(l[key])}</span> : <span className="text-dim">—</span>
     }
@@ -97,15 +113,14 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
 
       {activeTab === 'available' && (
         <div className="alert alert-warning" style={{ marginBottom: 12, fontSize: 12 }}>
-          Lines in the Verizon usage report not matched to any vehicle in CCSI. These include hotspots, backup SIMs, and lines where CCSI has no phone number entry.
+          Lines not matched to any vehicle — hotspots, backup SIMs, or lines with no phone number in CCSI.
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => setLocalQ(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && nav({ q: localQ, page: '0' })}
+          <input value={localQ} onChange={e => handleSearch(e.target.value)}
             placeholder="Search phone, user, plan…" style={{ height: 34 }} />
         </div>
         {activeFilters > 0 && (
@@ -115,10 +130,10 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
           </button>
         )}
         <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
-          style={{ height: 34, fontSize: 12, padding: '0 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', cursor: 'pointer' }}>
-          {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
+          className="btn-secondary btn-sm" style={{ height: 34, fontSize: 12, padding: '0 8px', cursor: 'pointer' }}>
+          {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
-                <ColumnPicker storageKey="lines-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
+        <ColumnPicker storageKey="lines-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
         <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('verizon-lines', lines, displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -137,34 +152,28 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
                   </span>
                 </th>
               ))}</tr>
-              {/* Filter row — only ≤10 unique value columns get dropdowns */}
               <tr>{displayCols.map(col => (
-                <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
+                <th key={col.key} style={{ padding: '3px 6px', background: 'var(--bg3)' }}>
                   {col.key === 'role' ? (
-                    <select value={fRole} onChange={e => nav({ f_role: e.target.value, page: '0' })}
-                      style={{ width: '100%', fontSize: 10, height: 22, background: fRole ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${fRole ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: fRole ? 'var(--accent)' : 'var(--text)', fontWeight: fRole ? 600 : 400 }}>
-                      <option value="">All</option>
+                    <select value={fRole} onChange={e => nav({ f_role: e.target.value, page: '0' })} style={SEL(!!fRole)}>
+                      <option value="">All roles</option>
                       <option value="Driver">Driver</option>
                       <option value="PIM">PIM</option>
                       <option value="Unassigned">Unassigned</option>
                     </select>
                   ) : col.key === 'phone_status' ? (
-                    <select value={fStatus} onChange={e => nav({ f_status: e.target.value, page: '0' })}
-                      style={{ width: '100%', fontSize: 10, height: 22, background: fStatus ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${fStatus ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: fStatus ? 'var(--accent)' : 'var(--text)', fontWeight: fStatus ? 600 : 400 }}>
-                      <option value="">All</option>
+                    <select value={fStatus} onChange={e => nav({ f_status: e.target.value, page: '0' })} style={SEL(!!fStatus)}>
+                      <option value="">All statuses</option>
                       <option value="active">Active</option>
                       <option value="suspend">Suspended</option>
                     </select>
                   ) : col.key === 'vehicle' ? (
-                    <select value={fVehicle} onChange={e => nav({ f_vehicle: e.target.value, page: '0' })}
-                      style={{ width: '100%', fontSize: 10, height: 22, background: fVehicle ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${fVehicle ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: fVehicle ? 'var(--accent)' : 'var(--text)', fontWeight: fVehicle ? 600 : 400 }}>
+                    <select value={fVehicle} onChange={e => nav({ f_vehicle: e.target.value, page: '0' })} style={SEL(!!fVehicle)}>
                       <option value="">All</option>
                       <option value="assigned">Assigned</option>
                       <option value="unassigned">Unassigned</option>
                     </select>
-                  ) : (
-                    <div style={{ height: 22 }} />
-                  )}
+                  ) : <div />}
                 </th>
               ))}</tr>
             </thead>
@@ -186,18 +195,15 @@ export default function LinesTable({ lines, page, perPage = 50, totalPages, tota
             </tbody>
           </table>
         </div>
-
-        {totalPages > 1 && (
-          <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, color: 'var(--text3)' }}>{totalCount.toLocaleString()} lines · page {page + 1} of {totalPages}</span>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: '0' })}>«</button>
-              <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: String(page - 1) })}>← Prev</button>
-              <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(page + 1) })}>Next →</button>
-              <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(totalPages - 1) })}>»</button>
-            </div>
+        <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)' }}>{totalCount.toLocaleString()} lines · page {page + 1} of {totalPages || 1}</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: '0' })}>«</button>
+            <button className="btn-secondary btn-sm" disabled={page === 0} onClick={() => nav({ page: String(page - 1) })}>← Prev</button>
+            <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(page + 1) })}>Next →</button>
+            <button className="btn-secondary btn-sm" disabled={page >= totalPages - 1} onClick={() => nav({ page: String(totalPages - 1) })}>»</button>
           </div>
-        )}
+        </div>
       </div>
     </>
   )

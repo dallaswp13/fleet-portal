@@ -1,5 +1,5 @@
 'use client'
-import { useState, useTransition, useCallback, useEffect } from 'react'
+import { useState, useTransition, useCallback, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import VehiclePanel from '@/components/VehiclePanel'
 import ColumnPicker from '@/components/ColumnPicker'
@@ -41,6 +41,14 @@ const FILTER_COLS: Record<string, { label: string; value: string }[]> = {
 }
 
 // Map col key → URL param name
+const SEL = (active: boolean): React.CSSProperties => ({
+  width: '100%', fontSize: 11, height: 28, paddingLeft: 6, paddingRight: 2,
+  background: active ? 'var(--accent-dim)' : 'var(--bg2)',
+  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+  borderRadius: 4, color: active ? 'var(--accent)' : 'var(--text)',
+  fontWeight: active ? 600 : 400, cursor: 'pointer',
+})
+
 const COL_TO_PARAM: Record<string, string> = {
   online_status: 'f_status',
   fleet_id:      'f_fleet',
@@ -57,6 +65,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   const [localQ,   setLocalQ]   = useState(search)
   const [panel,    setPanel]    = useState<FleetOverview | null>(null)
   const [visibleCols, setVisibleCols] = useState<string[]>(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { setLocalQ(search) }, [search])
 
@@ -78,6 +87,12 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
 
   function handleFilter(param: string, value: string) {
     nav({ [param]: value, page: '0' })
+  }
+
+  function handleSearch(val: string) {
+    setLocalQ(val)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => nav({ q: val, page: '0' }), 350)
   }
 
   function SortIcon({ col }: { col: string }) {
@@ -119,18 +134,15 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
       {panel && <VehiclePanel vehicle={panel} onClose={() => setPanel(null)} onSaved={updated => setPanel(updated)} />}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'stretch' }}>
-        {/* Search */}
-        <form style={{ flex: '1 1 260px' }} onSubmit={e => { e.preventDefault(); nav({ q: localQ, page: '0' }) }}>
-          <div className="search-wrap">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input value={localQ} onChange={e => setLocalQ(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
-          </div>
-        </form>
+        <div className="search-wrap" style={{ flex: '1 1 260px' }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
+        </div>
 
         {/* Per-page selector */}
         <select value={perPage} onChange={e => nav({ per_page: e.target.value, page: '0' })}
-          style={{ height: 34, fontSize: 12, padding: '0 8px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text)', cursor: 'pointer' }}>
-          {PER_PAGE_OPTIONS.map(n => <option key={n} value={n}>{n} per page</option>)}
+          className="btn-secondary btn-sm" style={{ height: 34, fontSize: 12, padding: '0 8px', cursor: 'pointer' }}>
+          {PER_PAGE_OPTIONS.map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
 
         {/* Clear filters */}
@@ -173,7 +185,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
                       <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
                         {opts && param ? (
                           <select value={current} onChange={e => handleFilter(param, e.target.value)}
-                            style={{ width: '100%', fontSize: 11, height: 24, background: current ? 'var(--accent-dim)' : 'var(--bg2)', border: `1px solid ${current ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 4, color: current ? 'var(--accent)' : 'var(--text)', fontWeight: current ? 600 : 400, cursor: 'pointer' }}>
+                            style={SEL(!!current)}>
                             <option value="">All</option>
                             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
