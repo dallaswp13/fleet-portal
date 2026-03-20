@@ -56,9 +56,10 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
     query = query.or(`transaction_id.ilike.${like},device_name.ilike.${like},location.ilike.${like},description.ilike.${like},payment_type.ilike.${like}`)
   }
 
-  const { data, count } = await query
-
-  const { data: stats } = await supabase.from('transactions').select('amount, status')
+  const [{ data, count }, { data: stats }] = await Promise.all([
+    query,
+    supabase.from('transactions').select('amount, status'),
+  ])
   const totalRevenue = (stats ?? []).filter(t => t.status !== 'REFUNDED').reduce((s, t) => s + (Number(t.amount) || 0), 0)
   const totalRefunds = (stats ?? []).filter(t => t.status === 'REFUNDED').reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0)
 

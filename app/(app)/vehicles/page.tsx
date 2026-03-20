@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import VehiclesTable from '@/components/VehiclesTable'
 import type { FleetOverview } from '@/types'
 import { getOfficesFromParam, getTabsFromParam, getAscFleetsFromParam, getFleetIdsFromFilters, SHEET_TABS } from '@/lib/filters'
+import { unstable_cache } from 'next/cache'
 
 const DEFAULT_PER_PAGE = 50
 const SORTABLE = ['vehicle_number','fleet_id','office','online_status','driver_app_version',
@@ -90,16 +91,21 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
     }
   }
 
-  const { data, error, count } = await query
-
-  // Fetch distinct app versions for filter dropdowns
-  const { data: appVersionData } = await supabase
-    .from('fleet_overview')
-    .select('driver_app_version, pim_app_version')
-    .not('driver_app_version', 'is', null)
-    .limit(3000)
-  const driverAppVersions = Array.from(new Set((appVersionData ?? []).map(r => r.driver_app_version).filter(Boolean))).sort() as string[]
-  const pimAppVersions    = Array.from(new Set((appVersionData ?? []).map(r => r.pim_app_version).filter(Boolean))).sort() as string[]
+  // Run main query and app version fetch in parallel
+  const getAppVersions = unstable_cache(
+    async () => {
+      const { createClient: mkClient } = await import('@/lib/supabase/server')
+      const sb = await mkClient()
+      const { data } = await sb.from('fleet_overview').select('driver_app_version, pim_app_version').not('driver_app_version', 'is', null).limit(3000)
+      const driver = Array.from(new Set((data ?? []).map((r: Record<string,unknown>) => r.driver_app_version).filter(Boolean))).sort() as string[]
+      const pim    = Array.from(new Set((data ?? []).map((r: Record<string,unknown>) => r.pim_app_version).filter(Boolean))).sort() as string[]
+      return { driver, pim }
+    },
+    ['app-versions'],
+    { revalidate: 300 }
+  )
+  const [{ data, error, count }, { driver: driverAppVersions, pim: pimAppVersions }] =
+    await Promise.all([query, getAppVersions()])
 
   if (error) return (
     <div className="page-content">

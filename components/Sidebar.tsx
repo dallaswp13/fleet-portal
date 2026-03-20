@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 const mainNav = [
-  { href: '/',          label: 'Dashboard',     icon: '▦'  },
+  { href: '/',          label: 'Dashboard',     icon: '◉'  },
   { href: '/actions',   label: 'Quick Actions',  icon: '⚡' },
   { href: '/vehicles',  label: 'Vehicles',       icon: '🚕' },
   { href: '/devices',   label: 'Devices',        icon: '📱' },

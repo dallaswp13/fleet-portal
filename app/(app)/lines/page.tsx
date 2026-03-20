@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { Suspense } from 'react'
 import LinesTable from '@/components/LinesTable'
 import { getOfficesFromParam, getAscFleetsFromParam, getFleetIdsFromFilters } from '@/lib/filters'
+import { unstable_cache } from 'next/cache'
 
 const DEFAULT_PER_PAGE = 50
 const STAFF_ACCTS = ['571689935-00007', '571689935-00009']
@@ -49,26 +50,31 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
     if (['E','L','S','Y','U'].some(f => s.has(f))) officeList.push('ASC')
   }
 
-  // ── Fetch vehicles in batches — scoped to selected fleets when filtering ────
-  // This ensures ASC sub-fleet filters (E/L/S/Y/U) only include phones for
-  // vehicles in the selected sub-fleet, not all ASC vehicles.
-  const allVehicles: { vehicle_number: number; fleet_id: string; driver_phone_norm: string | null; pim_phone_norm: string | null }[] = []
-  let from = 0
-  while (true) {
-    let vq = supabase
-      .from('vehicles')
-      .select('vehicle_number,fleet_id,driver_phone_norm,pim_phone_norm')
-      .range(from, from + 999)
-    // Apply fleet filter so sub-fleet pills actually scope the phone maps
-    if (fleetIds !== null && fleetIds.length > 0) {
-      vq = vq.in('fleet_id', fleetIds)
-    }
-    const { data, error } = await vq
-    if (error || !data || data.length === 0) break
-    allVehicles.push(...data)
-    if (data.length < 1000) break
-    from += 1000
-  }
+  // ── Fetch vehicles in batches, cached for 60s to avoid repeated round trips ─
+  const fleetKey = fleetIds ? fleetIds.sort().join(',') : 'all'
+  const getCachedVehicles = unstable_cache(
+    async (key: string) => {
+      const ids = key === 'all' ? null : key.split(',')
+      const rows: { vehicle_number: number; fleet_id: string; driver_phone_norm: string | null; pim_phone_norm: string | null }[] = []
+      let from = 0
+      // Use a fresh supabase client inside the cached function
+      const { createClient: mkClient } = await import('@/lib/supabase/server')
+      const sb = await mkClient()
+      while (true) {
+        let q = sb.from('vehicles').select('vehicle_number,fleet_id,driver_phone_norm,pim_phone_norm').range(from, from + 999)
+        if (ids) q = q.in('fleet_id', ids)
+        const { data, error } = await q
+        if (error || !data || data.length === 0) break
+        rows.push(...data)
+        if (data.length < 1000) break
+        from += 1000
+      }
+      return rows
+    },
+    ['vehicle-phone-maps'],
+    { revalidate: 60 }
+  )
+  const allVehicles = await getCachedVehicles(fleetKey)
 
   // Build phone maps
   const driverMap = new Map<string, { vehicleNum: number; fleetId: string }>()
