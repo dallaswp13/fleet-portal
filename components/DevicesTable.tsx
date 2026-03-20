@@ -145,8 +145,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
                     </select>
                   ) : col.key === 'tablet_model' ? (
                     <input className="filter-select" value={fModel} onChange={e => nav({ f_model: e.target.value, page: '0' })}
-                      placeholder="Filter…"
-                      style={{ ...SEL(!!fModel), width: '100%', padding: '0 6px' }} />
+                      placeholder="Filter model…" style={SEL(!!fModel)} />
                   ) : col.key === 'android_os' ? (
                     <select className="filter-select" value={fOs} onChange={e => nav({ f_os: e.target.value, page: '0' })} style={SEL(!!fOs)}>
                       <option value="">All</option>

@@ -49,14 +49,21 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
     if (['E','L','S','Y','U'].some(f => s.has(f))) officeList.push('ASC')
   }
 
-  // ── Fetch ALL vehicles in batches (Supabase 1000-row cap) ─────────────────
+  // ── Fetch vehicles in batches — scoped to selected fleets when filtering ────
+  // This ensures ASC sub-fleet filters (E/L/S/Y/U) only include phones for
+  // vehicles in the selected sub-fleet, not all ASC vehicles.
   const allVehicles: { vehicle_number: number; fleet_id: string; driver_phone_norm: string | null; pim_phone_norm: string | null }[] = []
   let from = 0
   while (true) {
-    const { data, error } = await supabase
+    let vq = supabase
       .from('vehicles')
       .select('vehicle_number,fleet_id,driver_phone_norm,pim_phone_norm')
       .range(from, from + 999)
+    // Apply fleet filter so sub-fleet pills actually scope the phone maps
+    if (fleetIds !== null && fleetIds.length > 0) {
+      vq = vq.in('fleet_id', fleetIds)
+    }
+    const { data, error } = await vq
     if (error || !data || data.length === 0) break
     allVehicles.push(...data)
     if (data.length < 1000) break

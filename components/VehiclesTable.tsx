@@ -1,5 +1,5 @@
 'use client'
-import { useState, useTransition, useCallback, useEffect, useRef } from 'react'
+import { useState, useTransition, useCallback, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import VehiclePanel from '@/components/VehiclePanel'
 import ColumnPicker from '@/components/ColumnPicker'
@@ -11,6 +11,8 @@ interface Props {
   totalPages: number; totalCount: number
   search: string; sort: string; dir: boolean
   fStatus: string; fFleet: string; fMeter: string; fTab: string
+  fDriverApp: string; fPimApp: string
+  driverAppVersions: string[]; pimAppVersions: string[]
 }
 
 const ALL_COLS = [
@@ -49,15 +51,17 @@ const SEL = (active: boolean): React.CSSProperties => ({
 })
 
 const COL_TO_PARAM: Record<string, string> = {
-  online_status: 'f_status',
-  fleet_id:      'f_fleet',
-  meter_status:  'f_meter',
-  sheet_tab:     'f_tab',
+  online_status:       'f_status',
+  fleet_id:            'f_fleet',
+  meter_status:        'f_meter',
+  sheet_tab:           'f_tab',
+  driver_app_version:  'f_driver_app',
+  pim_app_version:     'f_pim_app',
 }
 
 const PER_PAGE_OPTIONS = [25, 50, 100]
 
-export default function VehiclesTable({ vehicles, page, perPage, totalPages, totalCount, search, sort, dir, fStatus, fFleet, fMeter, fTab }: Props) {
+export default function VehiclesTable({ vehicles, page, perPage, totalPages, totalCount, search, sort, dir, fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp, driverAppVersions, pimAppVersions }: Props) {
   const [, startTransition] = useTransition()
   const router     = useRouter()
   const pathname   = usePathname()
@@ -67,24 +71,22 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isTypingRef  = useRef(false)
 
-  // Only sync localQ from server prop when user is not actively typing.
-  // Without this guard, a router.push() re-render overwrites what the user
-  // is mid-typing, causing the input to lose focus / cursor position.
-  useEffect(() => {
-    if (!isTypingRef.current) setLocalQ(search)
-  }, [search])
+  // Intentionally NOT syncing localQ from search prop on every re-render.
+  // useState(search) sets the initial value correctly from the URL.
+  // Syncing on prop change would overwrite what the user is typing mid-debounce.
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
     const base: Record<string, string> = {
       q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc',
       per_page: String(perPage),
       f_status: fStatus, f_fleet: fFleet, f_meter: fMeter, f_tab: fTab,
+      f_driver_app: fDriverApp, f_pim_app: fPimApp,
     }
     const p = new URLSearchParams({ ...base, ...overrides })
     // Remove empty filter params for clean URLs
-    ;['f_status','f_fleet','f_meter','f_tab','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
+    ;['f_status','f_fleet','f_meter','f_tab','f_driver_app','f_pim_app','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
     startTransition(() => router.push(`${pathname}?${p.toString()}`))
-  }, [search, page, sort, dir, perPage, fStatus, fFleet, fMeter, fTab, pathname, router])
+  }, [search, page, sort, dir, perPage, fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp, pathname, router])
 
   function handleSort(col: string) {
     nav({ sort: col, dir: sort === col && dir ? 'desc' : 'asc', page: '0' })
@@ -110,7 +112,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   }
 
   const displayCols = ALL_COLS.filter(c => visibleCols.includes(c.key))
-  const activeFilters = [fStatus, fFleet, fMeter, fTab].filter(Boolean)
+  const activeFilters = [fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp].filter(Boolean)
 
   function cellValue(v: FleetOverview, key: string): React.ReactNode {
     switch (key) {
@@ -138,7 +140,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
     }
   }
 
-  const hasFilters = displayCols.some(c => !!FILTER_COLS[c.key])
+  const hasFilters = displayCols.some(c => !!FILTER_COLS[c.key] || c.key === 'driver_app_version' || c.key === 'pim_app_version')
 
   return (
     <>
@@ -159,7 +161,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
         {/* Clear filters */}
         {activeFilters.length > 0 && (
           <button className="btn-secondary btn-sm" style={{ height: 36 }}
-            onClick={() => nav({ f_status: '', f_fleet: '', f_meter: '', f_tab: '', page: '0' })}>
+            onClick={() => nav({ f_status: '', f_fleet: '', f_meter: '', f_tab: '', f_driver_app: '', f_pim_app: '', page: '0' })}>
             Clear {activeFilters.length} filter{activeFilters.length > 1 ? 's' : ''}
           </button>
         )}
@@ -190,8 +192,9 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
                 <tr>
                   {displayCols.map(col => {
                     const param   = COL_TO_PARAM[col.key]
-                    const opts    = FILTER_COLS[col.key]
-                    const current = param === 'f_status' ? fStatus : param === 'f_fleet' ? fFleet : param === 'f_meter' ? fMeter : param === 'f_tab' ? fTab : ''
+                    const dynamicOpts = col.key === 'driver_app_version' ? driverAppVersions.map(v => ({ label: v, value: v })) : col.key === 'pim_app_version' ? pimAppVersions.map(v => ({ label: v, value: v })) : null
+                    const opts    = dynamicOpts ?? FILTER_COLS[col.key]
+                    const current = param === 'f_status' ? fStatus : param === 'f_fleet' ? fFleet : param === 'f_meter' ? fMeter : param === 'f_tab' ? fTab : param === 'f_driver_app' ? fDriverApp : param === 'f_pim_app' ? fPimApp : ''
                     return (
                       <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
                         {opts && param ? (

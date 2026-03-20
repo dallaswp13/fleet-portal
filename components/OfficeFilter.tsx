@@ -16,6 +16,11 @@ const TAB_LABELS: Record<SheetTab, string> = {
   'Test Vehicles':   'Test',
   'Surrenders':      'Surrendered',
 }
+const TAB_COLORS: Record<SheetTab, string> = {
+  'Active Vehicles': 'var(--green)',
+  'Test Vehicles':   'var(--amber)',
+  'Surrenders':      'var(--red)',
+}
 
 function parseOffices(param: string | null): Set<Office> {
   if (!param) return new Set(OFFICES)
@@ -170,7 +175,7 @@ export default function OfficeFilter() {
       <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>Status</span>
       <button style={pill(allTabs)} onClick={() => allTabs ? apply(offices, new Set(), ascFleets) : apply(offices, new Set(SHEET_TABS), ascFleets)}>All</button>
       {SHEET_TABS.map(t => (
-        <button key={t} style={pill(tabs.has(t))} onClick={() => toggleTab(t)}>{TAB_LABELS[t]}</button>
+        <button key={t} style={pill(tabs.has(t), TAB_COLORS[t])} onClick={() => toggleTab(t)}>{TAB_LABELS[t]}</button>
       ))}
     </div>
   )

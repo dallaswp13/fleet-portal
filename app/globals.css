@@ -84,7 +84,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-ghost:hover:not(:disabled) { background: var(--bg3); color: var(--text); }
 .btn-sm { padding: 0 12px; font-size: 12px; height: 36px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 /* Compact filter selects used in table header rows */
-select.filter-select {
+select.filter-select,
+input.filter-select {
   padding: 0 8px;
   height: 32px;
   font-size: 12px;

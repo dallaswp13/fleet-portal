@@ -12,6 +12,7 @@ interface SearchParams {
   page?: string; q?: string; sort?: string; dir?: string; per_page?: string
   offices?: string; tabs?: string; asc_fleets?: string
   f_status?: string; f_fleet?: string; f_meter?: string; f_tab?: string
+  f_driver_app?: string; f_pim_app?: string
 }
 
 export default async function VehiclesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -25,8 +26,10 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
   // Column filters — now server-side
   const fStatus = params.f_status ?? ''
   const fFleet  = params.f_fleet  ?? ''
-  const fMeter  = params.f_meter  ?? ''
-  const fTab    = params.f_tab    ?? ''
+  const fMeter     = params.f_meter      ?? ''
+  const fTab       = params.f_tab        ?? ''
+  const fDriverApp = params.f_driver_app ?? ''
+  const fPimApp    = params.f_pim_app    ?? ''
 
   const offices   = getOfficesFromParam(params.offices)
   const tabs      = getTabsFromParam(params.tabs)
@@ -52,8 +55,10 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
   // Server-side column filters
   if (fStatus) query = query.ilike('online_status', `${fStatus}%`)
   if (fFleet)  query = query.eq('fleet_id', fFleet)
-  if (fMeter)  query = query.ilike('meter_status', `${fMeter}%`)
-  if (fTab)    query = query.eq('sheet_tab', fTab)
+  if (fMeter)     query = query.ilike('meter_status', `${fMeter}%`)
+  if (fTab)       query = query.eq('sheet_tab', fTab)
+  if (fDriverApp) query = query.eq('driver_app_version', fDriverApp)
+  if (fPimApp)    query = query.eq('pim_app_version', fPimApp)
 
   if (search) {
     const like = `%${search}%`
@@ -87,6 +92,15 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
 
   const { data, error, count } = await query
 
+  // Fetch distinct app versions for filter dropdowns
+  const { data: appVersionData } = await supabase
+    .from('fleet_overview')
+    .select('driver_app_version, pim_app_version')
+    .not('driver_app_version', 'is', null)
+    .limit(3000)
+  const driverAppVersions = Array.from(new Set((appVersionData ?? []).map(r => r.driver_app_version).filter(Boolean))).sort() as string[]
+  const pimAppVersions    = Array.from(new Set((appVersionData ?? []).map(r => r.pim_app_version).filter(Boolean))).sort() as string[]
+
   if (error) return (
     <div className="page-content">
       <div className="alert alert-error">Failed to load vehicles: {error.message}</div>
@@ -108,6 +122,8 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
         totalCount={count ?? 0}
         search={search} sort={sort} dir={dir}
         fStatus={fStatus} fFleet={fFleet} fMeter={fMeter} fTab={fTab}
+        fDriverApp={fDriverApp} fPimApp={fPimApp}
+        driverAppVersions={driverAppVersions} pimAppVersions={pimAppVersions}
       />
     </div>
   )

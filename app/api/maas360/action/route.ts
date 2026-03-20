@@ -3,11 +3,12 @@ import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 import {
   rebootDevice, wipeDevice, enterKioskMode, exitKioskMode,
-  clearAppData, clearDispatchApp, clearPimBluetooth, initiateSupport
+  clearAppData, clearDispatchApp, clearPimBluetooth, initiateSupport,
+  searchDeviceByName
 } from '@/lib/maas360'
 import type { MaaS360Action } from '@/types'
 
-const DISPATCH_PACKAGE = process.env.DISPATCH_APP_PACKAGE ?? 'com.taxiapp.driver'
+const DISPATCH_PACKAGE = process.env.DISPATCH_APP_PACKAGE ?? 'com.ccsi.taxidispatch'
 const BT_PACKAGE       = 'com.android.bluetooth'
 
 export async function POST(req: NextRequest) {
@@ -16,9 +17,9 @@ export async function POST(req: NextRequest) {
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { action, deviceId, vehicleNumber, packageName, confirmed } = body as {
+  const { action, deviceId, vehicleNumber, packageName, confirmed, deviceName } = body as {
     action: string; deviceId: string; vehicleNumber?: number
-    packageName?: string; confirmed?: boolean
+    packageName?: string; confirmed?: boolean; deviceName?: string
   }
 
   if (!action || !deviceId) {
@@ -53,6 +54,22 @@ export async function POST(req: NextRequest) {
         result = { success: sup.success, raw: sup.raw }
         auditAction = action
         break
+      }
+      case 'search_device': {
+        if (!deviceName) return NextResponse.json({ error: 'deviceName required for search_device' }, { status: 400 })
+        try {
+          const driverSearch = await searchDeviceByName(deviceName)
+          const pimSearch    = await searchDeviceByName('*' + deviceName)
+          return NextResponse.json({
+            success: true,
+            driverDeviceId: driverSearch.deviceId,
+            pimDeviceId:    pimSearch.deviceId,
+            driverFound:    driverSearch.found,
+            pimFound:       pimSearch.found,
+          })
+        } catch (err) {
+          return NextResponse.json({ success: false, driverDeviceId: null, pimDeviceId: null, error: err instanceof Error ? err.message : 'Search failed' })
+        }
       }
       default:
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 })

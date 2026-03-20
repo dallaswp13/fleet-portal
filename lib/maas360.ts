@@ -103,7 +103,7 @@ async function sendDeviceAction(deviceId: string, actionKey: string, extra?: Rec
   return { success: res.ok, raw }
 }
 
-const DISPATCH_PKG = () => process.env.DISPATCH_APP_PACKAGE ?? 'com.taxiapp.driver'
+const DISPATCH_PKG = () => process.env.DISPATCH_APP_PACKAGE ?? 'com.ccsi.taxidispatch'
 const BT_PKG       = 'com.android.bluetooth'
 
 export async function wipeDevice(d: string)        { return sendDeviceAction(d, 'wipe') }

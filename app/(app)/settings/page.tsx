@@ -158,16 +158,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 detail: 'GMAIL_CREDENTIALS env var must be set in Vercel with a base64-encoded Google OAuth client secret. Once connected, Poll Now will pull real driver SMS messages.',
               },
               {
-                status: 'todo', label: 'Transactions — Vehicle Linking',
-                detail: 'Re-upload transactions.csv after deploying v1.35+. The import now links by device name (e.g. 6020E-SM-T387V) and location (Cab #6020). Run migration 019 in Supabase to backfill existing rows.',
+                status: 'done', label: 'Transactions — Vehicle Linking',
+                detail: 'Import links by device name and location. Re-upload transactions.csv to populate vehicle panel transaction history.',
               },
               {
-                status: 'todo', label: 'Driver Photos',
-                detail: 'Re-import CCSI-drivers.xlsx to refresh image_url values in the DB. Photos now route through /api/image-proxy to bypass S3 HTTP/CORS restrictions.',
-              },
-              {
-                status: 'todo', label: 'Phone Linking — Run Migration 020',
-                detail: 'Run supabase/migrations/020_definitive_phone_norm_fix.sql to normalize all phone numbers. This fixes Verizon line-to-vehicle associations for numbers stored with +1 prefix or dashes.',
+                status: 'done', label: 'Driver Photos',
+                detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS. Re-import CCSI-drivers.xlsx to refresh URLs.',
               },
               {
                 status: 'todo', label: 'Quick Actions — Full Workflows',
@@ -181,10 +177,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 status: 'done', label: 'Verizon Lines — Vehicle Association',
                 detail: 'Phone norm matching fixed. PIM and Driver phone filters now run in the database so counts and pagination are accurate.',
               },
-              {
-                status: 'done', label: 'Driver Photos — Image Proxy',
-                detail: 'S3 HTTP images now served through /api/image-proxy, resolving mixed-content and CORS issues.',
-              },
+
               {
                 status: 'done', label: 'Server-Side Pagination & Filtering',
                 detail: 'Vehicles, Devices, Verizon, and Transactions all filter and paginate in the database. Count and page numbers are always accurate.',
