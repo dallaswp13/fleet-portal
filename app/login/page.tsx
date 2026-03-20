@@ -67,7 +67,7 @@ export default function LoginPage() {
           </div>
 
           <button type="submit" className="btn-primary w-full" disabled={loading}>
-            {loading ? <><span className="spinner" style={{ borderTopColor: '#0a0c0f' }} /> Signing in…</> : 'Sign in'}
+            {loading ? <><span className="spinner" style={{ borderTopColor: 'white' }} /> Signing in…</> : 'Sign in'}
           </button>
         </form>
 

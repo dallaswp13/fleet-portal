@@ -60,7 +60,7 @@ export default function DashboardStats({ stats }: Props) {
                 height: 30, padding: '0 10px', fontSize: 11, borderRadius: 'var(--radius)',
                 background: visible.includes(s.label) ? 'var(--accent)' : 'var(--bg3)',
                 border: `1px solid ${visible.includes(s.label) ? 'var(--accent)' : 'var(--border)'}`,
-                color: visible.includes(s.label) ? '#0a0c0f' : 'var(--text2)',
+                color: visible.includes(s.label) ? 'white' : 'var(--text2)',
                 cursor: 'pointer', fontWeight: visible.includes(s.label) ? 600 : 400,
               }}>
               {s.label}
