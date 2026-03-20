@@ -83,7 +83,7 @@ export default function ColumnPicker({ storageKey, allColumns, onChange, height 
       <button
         className="btn-secondary btn-sm"
         onClick={() => setOpen(o => !o)}
-        style={{ height, display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px' }}
+        style={{ display: 'flex', alignItems: 'center', gap: 5 }}
       >
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>

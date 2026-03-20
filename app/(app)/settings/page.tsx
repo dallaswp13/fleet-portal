@@ -3,7 +3,6 @@ import Link from 'next/link'
 import UpdateDBContent from '@/components/UpdateDBContent'
 import UserManager from '@/components/UserManager'
 import InvoiceGenerator from '@/components/InvoiceGenerator'
-import DataValidationContent from '@/components/DataValidationContent'
 
 const PER_PAGE = 50
 
@@ -49,7 +48,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const tabDef = [
     { key: 'audit',      label: '📋 Audit Log'       },
     { key: 'db',         label: '⬆️ Update Database'  },
-    { key: 'validation', label: '🔍 Data Validation'  },
+    { key: 'roadmap',    label: '🗺️ Roadmap'          },
     ...(canManageUsers ? [{ key: 'users', label: '👥 Manage Users' }, { key: 'invoice', label: '🧾 Generate Invoice' }] : []),
   ]
 
@@ -137,8 +136,76 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       )}
 
       {tab === 'invoice' && canManageUsers && <InvoiceGenerator />}
-      {tab === 'validation' && (
-        <DataValidationContent />
+      {tab === 'roadmap' && (
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Launch Roadmap</h2>
+          <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 24 }}>
+            Remaining items before the site is fully operational.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {([
+              {
+                status: 'blocked', label: 'MaaS360 API Integration',
+                detail: 'Reboot, kiosk, wipe, and support actions in Vehicle Panel require valid MaaS360 app credentials. Access key may be expired — check Account → My Account → Application Management in the MaaS360 portal and regenerate if needed.',
+              },
+              {
+                status: 'blocked', label: 'SMS Inbox — Rule Execution',
+                detail: 'Poll Now parses intent and identifies vehicles correctly. Actual device actions (reboot, clear, kiosk) are not sent until MaaS360 API is working.',
+              },
+              {
+                status: 'blocked', label: 'Gmail OAuth',
+                detail: 'GMAIL_CREDENTIALS env var must be set in Vercel with a base64-encoded Google OAuth client secret. Once connected, Poll Now will pull real driver SMS messages.',
+              },
+              {
+                status: 'todo', label: 'Transactions — Vehicle Linking',
+                detail: 'Re-upload transactions.csv after deploying v1.35+. The import now links by device name (e.g. 6020E-SM-T387V) and location (Cab #6020). Run migration 019 in Supabase to backfill existing rows.',
+              },
+              {
+                status: 'todo', label: 'Driver Photos',
+                detail: 'Re-import CCSI-drivers.xlsx to refresh image_url values in the DB. Photos now route through /api/image-proxy to bypass S3 HTTP/CORS restrictions.',
+              },
+              {
+                status: 'todo', label: 'Phone Linking — Run Migration 020',
+                detail: 'Run supabase/migrations/020_definitive_phone_norm_fix.sql to normalize all phone numbers. This fixes Verizon line-to-vehicle associations for numbers stored with +1 prefix or dashes.',
+              },
+              {
+                status: 'todo', label: 'Quick Actions — Full Workflows',
+                detail: 'Replace Driver Tablet, Surrender Vehicle, and Remote Support currently log notes only. Full MDM workflow (device reassignment, policy push) requires MaaS360 API.',
+              },
+              {
+                status: 'done', label: 'Sitewide Filters (Office / Fleet)',
+                detail: 'Office and ASC sub-fleet filters are applied server-side across Vehicles, Devices, Verizon, and Drivers pages.',
+              },
+              {
+                status: 'done', label: 'Verizon Lines — Vehicle Association',
+                detail: 'Phone norm matching fixed. PIM and Driver phone filters now run in the database so counts and pagination are accurate.',
+              },
+              {
+                status: 'done', label: 'Driver Photos — Image Proxy',
+                detail: 'S3 HTTP images now served through /api/image-proxy, resolving mixed-content and CORS issues.',
+              },
+              {
+                status: 'done', label: 'Server-Side Pagination & Filtering',
+                detail: 'Vehicles, Devices, Verizon, and Transactions all filter and paginate in the database. Count and page numbers are always accurate.',
+              },
+            ] as { status: string; label: string; detail: string }[]).map((item, i) => (
+              <div key={i} style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', borderLeft: `3px solid ${item.status === 'done' ? 'var(--green)' : item.status === 'blocked' ? 'var(--red)' : 'var(--amber)'}` }}>
+                <div style={{ fontSize: 16, flexShrink: 0, paddingTop: 1 }}>
+                  {item.status === 'done' ? '✅' : item.status === 'blocked' ? '🔴' : '🟡'}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 3 }}>{item.label}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5 }}>{item.detail}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text3)' }}>
+            🔴 Blocked &nbsp;·&nbsp; 🟡 To Do &nbsp;·&nbsp; ✅ Done
+          </div>
+        </div>
       )}
       {tab === 'invoice' && !canManageUsers && (
         <div className="alert alert-error">You do not have permission to access this feature.</div>

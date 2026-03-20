@@ -79,12 +79,12 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
     switch (key) {
       case 'is_pim': {
         const isPim = typeof d.device_name === 'string' && d.device_name.startsWith('*')
-        return <span className={`badge ${isPim ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: 10 }}>{isPim ? 'PIM' : 'Driver'}</span>
+        return <span className={`badge ${isPim ? 'badge-amber' : 'badge-blue'}`}>{isPim ? 'PIM' : 'Driver'}</span>
       }
       case 'android_os': return <span style={{ fontSize: 12 }}>{shortOs(val as string)}</span>
       case 'compliance_status': {
         const s = String(val ?? ''); const isNon = s.toLowerCase().includes('non')
-        return s ? <span className={`badge ${isNon ? 'badge-red' : 'badge-green'}`} style={{ fontSize: 10 }}>{s}</span> : <span className="text-dim">—</span>
+        return s ? <span className={`badge ${isNon ? 'badge-red' : 'badge-green'}`}>{s}</span> : <span className="text-dim">—</span>
       }
       default: return val ? <span style={{ fontSize: 12 }}>{String(val)}</span> : <span className="text-dim">—</span>
     }
@@ -99,10 +99,10 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input value={localQ} onChange={e => handleSearch(e.target.value)}
-            placeholder="Search device, model, IMEI…" style={{ height: 34 }} />
+            placeholder="Search device, model, IMEI…" style={{ height: 36 }} />
         </div>
         {activeFilters > 0 && (
-          <button className="btn-secondary btn-sm" style={{ height: 34, fontSize: 11 }}
+          <button className="btn-secondary btn-sm" style={{ height: 36, fontSize: 11 }}
             onClick={() => nav({ f_type: '', f_compliance: '', f_model: '', f_os: '', f_policy: '', page: '0' })}>
             Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
           </button>
@@ -111,8 +111,8 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
           className="btn-secondary toolbar-select">
           {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
-        <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
-        <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+        <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={36} />
+        <button className="btn-secondary btn-sm" style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('devices', devices, displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export

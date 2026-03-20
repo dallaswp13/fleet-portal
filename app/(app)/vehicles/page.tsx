@@ -57,15 +57,28 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
 
   if (search) {
     const like = `%${search}%`
+    // When search is digits only, also generate a fuzzy phone pattern
+    // so "2132594422" matches stored "213-259-4422" or "(213) 259-4422"
+    const digits = search.replace(/\D/g, '')
+    const phoneLike = digits.length >= 7
+      ? `%${digits.slice(0,3)}%${digits.slice(3,6)}%${digits.slice(6)}%`
+      : like
+
     if (/^\d+$/.test(search)) {
       query = query.or(
         `vehicle_number.eq.${parseInt(search, 10)},` +
-        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
+        `driver_tablet_phone_number.ilike.${phoneLike},pim_phone_number.ilike.${phoneLike},` +
         `rfid.ilike.${like},device_name.ilike.${like},verizon_user.ilike.${like}`
       )
     } else {
+      // Non-digit search — strip dashes in case user typed with them
+      const stripped = search.replace(/[-().\s]/g, '')
+      const strippedLike = stripped.length >= 7
+        ? `%${stripped.slice(0,3)}%${stripped.slice(3,6)}%${stripped.slice(6)}%`
+        : like
       query = query.or(
-        `driver_tablet_phone_number.ilike.${like},pim_phone_number.ilike.${like},` +
+        `driver_tablet_phone_number.ilike.${like},driver_tablet_phone_number.ilike.${strippedLike},` +
+        `pim_phone_number.ilike.${like},pim_phone_number.ilike.${strippedLike},` +
         `rfid.ilike.${like},meter_bluetooth_name.ilike.${like},device_name.ilike.${like},` +
         `verizon_user.ilike.${like},fleet_id.ilike.${like},office.ilike.${like}`
       )

@@ -1,5 +1,6 @@
 'use client'
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -33,8 +34,11 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <span>Fleet Portal</span>
-        <small>Fleet Management</small>
+        <Image src="/logo.png" alt="Logo" width={42} height={42} style={{ borderRadius: 8, flexShrink: 0 }} />
+        <div>
+          <span>Fleet Portal</span>
+          <small>Fleet Management</small>
+        </div>
       </div>
 
       <div className="sidebar-sections-wrap">

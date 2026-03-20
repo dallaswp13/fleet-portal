@@ -91,15 +91,15 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input value={localQ} onChange={e => handleSearch(e.target.value)}
-            placeholder="Search ID, location, description…" style={{ height: 34 }} />
+            placeholder="Search ID, location, description…" style={{ height: 36 }} />
         </div>
         <div className="search-wrap" style={{ width: 160 }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 14, height: 14 }}><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
           <input value={localV} onChange={e => handleVehicle(e.target.value)}
-            placeholder="Filter vehicle…" style={{ height: 34 }} />
+            placeholder="Filter vehicle…" style={{ height: 36 }} />
         </div>
         {activeFilters > 0 && (
-          <button className="btn-secondary btn-sm" style={{ height: 34, fontSize: 11 }}
+          <button className="btn-secondary btn-sm" style={{ height: 36, fontSize: 11 }}
             onClick={() => nav({ f_status: '', page: '0' })}>
             Clear filter
           </button>
@@ -108,7 +108,7 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
           className="btn-secondary toolbar-select">
           {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
-        <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+        <button className="btn-secondary btn-sm" style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('transactions', transactions, COLS.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
@@ -152,7 +152,7 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
                     <td style={{ fontSize: 12, color: 'var(--text2)' }}>{String(t.description ?? '—')}</td>
                     <td>{fmtCurrency(t.amount)}</td>
                     <td style={{ fontSize: 12 }}>{String(t.payment_type ?? '—')}</td>
-                    <td><span className={`badge ${String(t.status) === 'COMPLETED' ? 'badge-green' : String(t.status) === 'REFUNDED' ? 'badge-red' : 'badge-gray'}`} style={{ fontSize: 10 }}>{String(t.status ?? '—')}</span></td>
+                    <td><span className={`badge ${String(t.status) === 'COMPLETED' ? 'badge-green' : String(t.status) === 'REFUNDED' ? 'badge-red' : 'badge-gray'}`}>{String(t.status ?? '—')}</span></td>
                   </tr>
                 )
               })}

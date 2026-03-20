@@ -321,9 +321,9 @@ export default function SmsPage() {
                     <span style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(m.received_at).toLocaleString()}</span>
                     <div style={{ display: 'flex', gap: 6 }}>
                       {m.vehicle_number && <span className="tag" style={{ fontSize: 10 }}>#{m.vehicle_number}</span>}
-                      {m.action && m.action !== 'unknown' && <span className="badge badge-blue" style={{ fontSize: 10 }}>{ACTION_LABELS[m.action] ?? m.action}</span>}
-                      {m.success === true && <span className="badge badge-green" style={{ fontSize: 10 }}>✓</span>}
-                      {m.success === false && <span className="badge badge-red" style={{ fontSize: 10 }}>✗</span>}
+                      {m.action && m.action !== 'unknown' && <span className="badge badge-blue">{ACTION_LABELS[m.action] ?? m.action}</span>}
+                      {m.success === true && <span className="badge badge-green">✓</span>}
+                      {m.success === false && <span className="badge badge-red">✗</span>}
                     </div>
                   </div>
                   <div style={{ fontSize: 13, color: 'var(--text)', background: 'var(--bg3)', padding: '10px 12px', borderRadius: 'var(--radius)', lineHeight: 1.5 }}>{m.sms_text}</div>
@@ -422,8 +422,8 @@ export default function SmsPage() {
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                          <button className="btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => startEdit(r)}>Edit</button>
-                          <button className="btn-secondary btn-sm" style={{ fontSize: 11, color: 'var(--blue)' }}
+                          <button className="btn-secondary btn-sm"  onClick={() => startEdit(r)}>Edit</button>
+                          <button className="btn-secondary btn-sm" style={{ color: 'var(--blue)' }}
                             onClick={() => testRule(r)} disabled={testingRule === r.id}>
                             {testingRule === r.id ? <span className="spinner" /> : '▶ Test'}
                           </button>
@@ -451,7 +451,7 @@ export default function SmsPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 600 }}>Message Log</span>
             {selectedMsgs.size > 0 && (
-              <button className="btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => setSelectedMsgs(new Set())}>
+              <button className="btn-secondary btn-sm"  onClick={() => setSelectedMsgs(new Set())}>
                 Clear selection ({selectedMsgs.size})
               </button>
             )}
@@ -485,9 +485,9 @@ export default function SmsPage() {
                   const isSelected = selectedMsgs.has(m.id)
                   return (
                     <tr key={m.id} onClick={() => openThread(m)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined }}>
-                      <td>
+                      <td onClick={e => { e.stopPropagation(); toggleMsgSelect(m.id) }} style={{ cursor: 'pointer', width: 32 }}>
                         <div style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--blue)' : 'var(--border2)'}`,
-                          background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
                           {isSelected && <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2"><polyline points="2 6 5 9 10 3"/></svg>}
                         </div>
                       </td>
@@ -495,9 +495,9 @@ export default function SmsPage() {
                       <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.sender}</td>
                       <td style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.sms_text}>{m.sms_text}</td>
                       <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
-                      <td><span className="badge badge-gray" style={{ fontSize: 10 }}>{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
+                      <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
                       <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>
-                      <td>{m.confidence ? <span className={`badge ${confidenceColor(m.confidence)}`} style={{ fontSize: 10 }}>{m.confidence}</span> : <span className="text-dim">—</span>}</td>
+                      <td>{m.confidence ? <span className={`badge ${confidenceColor(m.confidence)}`}>{m.confidence}</span> : <span className="text-dim">—</span>}</td>
                       <td>
                         {m.success === null ? <span className="badge badge-gray">Skipped</span>
                           : m.success ? <span className="badge badge-green">✓ Done</span>

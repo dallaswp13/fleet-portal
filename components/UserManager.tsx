@@ -187,7 +187,7 @@ function UserRow({ profile: p, isSelf, saving, onSave }: {
       <td>
         <div style={{ fontWeight: 500, fontSize: 13 }}>{p.display_name || p.email}</div>
         {p.display_name && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{p.email}</div>}
-        {isSelf && <span className="badge badge-blue" style={{ fontSize: 10 }}>You</span>}
+        {isSelf && <span className="badge badge-blue">You</span>}
       </td>
       <td>
         {editing ? (

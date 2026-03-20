@@ -241,9 +241,9 @@ function DriversContent() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <span className="badge badge-gray" style={{ fontSize: 10 }}>{d.fleet_id.toUpperCase()}</span>
+                <span className="badge badge-gray">{d.fleet_id.toUpperCase()}</span>
                 {d.seated_vehicle_number && <span className="tag" style={{ fontSize: 10 }}>#{d.seated_vehicle_number}</span>}
-                {!d.active && <span className="badge badge-gray" style={{ fontSize: 10 }}>Inactive</span>}
+                {!d.active && <span className="badge badge-gray">Inactive</span>}
                 {d.personal_phone && <span style={{ fontSize: 10, color: 'var(--green)' }}>📱</span>}
               </div>
             </div>

@@ -9,13 +9,8 @@ export default function ClaudeSupportToggle() {
       <button
         onClick={() => setShowTooltip(v => !v)}
         title="Claude Support (requires MaaS360 API)"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 5,
-          padding: '4px 10px', borderRadius: 'var(--radius)',
-          background: 'var(--bg3)', border: '1px solid var(--border)',
-          color: 'var(--text3)', fontSize: 12, cursor: 'pointer',
-          opacity: 0.6,
-        }}>
+        className="btn-icon"
+        style={{ height: 32, padding: '0 10px', gap: 5, fontSize: 12, color: 'var(--text3)', opacity: 0.6, width: 'auto', display: 'flex', alignItems: 'center' }}>
         <span style={{ fontSize: 14 }}>🤖</span>
         <span style={{ fontWeight: 500 }}>Claude</span>
         <span style={{ fontSize: 10, background: 'var(--bg4)', padding: '1px 5px', borderRadius: 10 }}>Off</span>

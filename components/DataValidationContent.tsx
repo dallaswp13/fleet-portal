@@ -168,7 +168,7 @@ export default function DataValidationContent() {
                   {issues.map((issue, i) => (
                     <tr key={i}>
                       <td>
-                        <span className={`badge ${issue.severity === 'error' ? 'badge-red' : 'badge-amber'}`} style={{ fontSize: 10 }}>
+                        <span className={`badge ${issue.severity === 'error' ? 'badge-red' : 'badge-amber'}`}>
                           {issue.type}
                         </span>
                       </td>

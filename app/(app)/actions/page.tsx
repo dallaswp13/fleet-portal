@@ -291,10 +291,10 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <button className="btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => setExpanded(e => !e)}>
+          <button className="btn-secondary btn-sm"  onClick={() => setExpanded(e => !e)}>
             {expanded ? 'Hide' : 'Notes'}
           </button>
-          <button className="btn-secondary btn-sm" style={{ fontSize: 11, color: 'var(--green)' }} onClick={resolve}>✓ Resolve</button>
+          <button className="btn-secondary btn-sm" style={{ color: 'var(--green)' }} onClick={resolve}>✓ Resolve</button>
         </div>
       </div>
       {expanded && (

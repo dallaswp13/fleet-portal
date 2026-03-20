@@ -239,7 +239,7 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
         <Field label="IMEI"        value={imei} mono />
         <Field label="Policy"      value={policy} />
         <Field label="Compliance"  value={compliance
-          ? <span className={`badge ${isNon ? 'badge-red' : 'badge-green'}`} style={{ fontSize: 10 }}>{compliance}</span>
+          ? <span className={`badge ${isNon ? 'badge-red' : 'badge-green'}`}>{compliance}</span>
           : null} />
         <Field label="Last Seen"   value={lastSeen} />
         <Field label="App Version" value={appVersion} />

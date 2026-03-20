@@ -64,9 +64,15 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   const [localQ,   setLocalQ]   = useState(search)
   const [panel,    setPanel]    = useState<FleetOverview | null>(null)
   const [visibleCols, setVisibleCols] = useState<string[]>(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isTypingRef  = useRef(false)
 
-  useEffect(() => { setLocalQ(search) }, [search])
+  // Only sync localQ from server prop when user is not actively typing.
+  // Without this guard, a router.push() re-render overwrites what the user
+  // is mid-typing, causing the input to lose focus / cursor position.
+  useEffect(() => {
+    if (!isTypingRef.current) setLocalQ(search)
+  }, [search])
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
     const base: Record<string, string> = {
@@ -90,8 +96,12 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
 
   function handleSearch(val: string) {
     setLocalQ(val)
+    isTypingRef.current = true
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => nav({ q: val, page: '0' }), 350)
+    debounceRef.current = setTimeout(() => {
+      isTypingRef.current = false
+      nav({ q: val, page: '0' })
+    }, 400)
   }
 
   function SortIcon({ col }: { col: string }) {
@@ -117,7 +127,9 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
       }
       case 'sheet_tab': {
         const s = String(v.sheet_tab ?? '')
-        return <span className="badge badge-gray">{s === 'Active Vehicles' ? 'Active' : s === 'Test Vehicles' ? 'Test' : s === 'Surrenders' ? 'Surrendered' : s}</span>
+        const label = s === 'Active Vehicles' ? 'Active' : s === 'Test Vehicles' ? 'Test' : s === 'Surrenders' ? 'Surrendered' : s
+        const cls   = s === 'Active Vehicles' ? 'badge-green' : s === 'Test Vehicles' ? 'badge-amber' : s === 'Surrenders' ? 'badge-red' : 'badge-gray'
+        return <span className={`badge ${cls}`}>{label}</span>
       }
       default: {
         const val = (v as unknown as Record<string, unknown>)[key]
@@ -135,7 +147,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 260px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 34 }} />
+          <input value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 36 }} />
         </div>
 
         {/* Per-page selector */}
@@ -146,14 +158,14 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
 
         {/* Clear filters */}
         {activeFilters.length > 0 && (
-          <button className="btn-secondary btn-sm" style={{ height: 34 }}
+          <button className="btn-secondary btn-sm" style={{ height: 36 }}
             onClick={() => nav({ f_status: '', f_fleet: '', f_meter: '', f_tab: '', page: '0' })}>
             Clear {activeFilters.length} filter{activeFilters.length > 1 ? 's' : ''}
           </button>
         )}
 
-        <ColumnPicker storageKey="vehicles-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
-        <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+        <ColumnPicker storageKey="vehicles-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={36} />
+        <button className="btn-secondary btn-sm" style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('vehicles', vehicles as unknown as Record<string,unknown>[], displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export

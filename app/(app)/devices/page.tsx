@@ -49,13 +49,11 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     else query = query.in('name_key', allowedNameKeys)
   }
 
-  // Type filter — use raw PostgREST filter to avoid chaining issues
+  // Type filter — PIM devices have device_name starting with literal '*'
   if (params.f_type === 'pim') {
     query = query.ilike('device_name', '*%')
   } else if (params.f_type === 'driver') {
-    // device_name does NOT start with * — use filter with not.ilike
-    query = (query as unknown as { filter: (col: string, op: string, val: string) => typeof query })
-      .filter('device_name', 'not.ilike', '*%')
+    query = query.not('device_name', 'ilike', '*%')
   }
 
   if (params.f_compliance) query = query.ilike('compliance_status', `%${params.f_compliance}%`)

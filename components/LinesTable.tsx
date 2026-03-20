@@ -77,7 +77,7 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
   function cellValue(l: Record<string,unknown>, key: string): React.ReactNode {
     switch (key) {
       case 'phone_number': return <span className="mono" style={{ fontWeight: 500 }}>{String(l.phone_number ?? '—')}</span>
-      case 'office': return l.office ? <span className="badge badge-gray" style={{ fontSize: 10 }}>{String(l.office)}</span> : <span className="text-dim">—</span>
+      case 'office': return l.office ? <span className="badge badge-gray">{String(l.office)}</span> : <span className="text-dim">—</span>
       case 'vehicle': return l.vehicle_number
         ? <span style={{ fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}
             onClick={e => { e.stopPropagation(); openByNumber(l.vehicle_number as number, l.fleet_id as string) }}>
@@ -85,9 +85,9 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
           </span>
         : <span className="text-dim">—</span>
       case 'role': return l.role
-        ? <span className={`badge ${l.role === 'Driver' ? 'badge-blue' : 'badge-amber'}`} style={{ fontSize: 10 }}>{String(l.role)}</span>
-        : <span className="badge badge-gray" style={{ fontSize: 10 }}>Unassigned</span>
-      case 'phone_status': return <span className={`badge ${statusColor(l.phone_status as string)}`} style={{ fontSize: 10 }}>{String(l.phone_status ?? 'Unknown')}</span>
+        ? <span className={`badge ${l.role === 'Driver' ? 'badge-blue' : 'badge-amber'}`}>{String(l.role)}</span>
+        : <span className="badge badge-gray">Unassigned</span>
+      case 'phone_status': return <span className={`badge ${statusColor(l.phone_status as string)}`}>{String(l.phone_status ?? 'Unknown')}</span>
       case 'monthly_usage_gb': return <UsageMeter value={Number(l.monthly_usage_gb ?? 0)} max={20} />
       case 'sub_account': return <span style={{ fontSize: 12 }}>{String(l.sub_account ?? l.account_number ?? '—')}</span>
       default: return l[key] ? <span style={{ fontSize: 12 }}>{String(l[key])}</span> : <span className="text-dim">—</span>
@@ -120,10 +120,10 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input value={localQ} onChange={e => handleSearch(e.target.value)}
-            placeholder="Search phone, user, plan…" style={{ height: 34 }} />
+            placeholder="Search phone, user, plan…" style={{ height: 36 }} />
         </div>
         {activeFilters > 0 && (
-          <button className="btn-secondary btn-sm" style={{ height: 34, fontSize: 11 }}
+          <button className="btn-secondary btn-sm" style={{ height: 36, fontSize: 11 }}
             onClick={() => nav({ f_role: '', f_status: '', f_vehicle: '', page: '0' })}>
             Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
           </button>
@@ -132,8 +132,8 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
           className="btn-secondary toolbar-select">
           {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
-        <ColumnPicker storageKey="lines-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={34} />
-        <button className="btn-secondary btn-sm" style={{ height: 34, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+        <ColumnPicker storageKey="lines-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={36} />
+        <button className="btn-secondary btn-sm" style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
           onClick={() => exportToCsv('verizon-lines', lines, displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
