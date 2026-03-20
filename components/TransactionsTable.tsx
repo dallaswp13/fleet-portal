@@ -36,8 +36,14 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
   const { vehicle: panelVehicle, openByNumber, close } = useVehiclePanel()
   const [localQ, setLocalQ]   = useState(search)
   const [localV, setLocalV]   = useState(vehicle)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inputRef    = useRef<HTMLInputElement>(null)
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef     = useRef<HTMLInputElement>(null)
+  const isTypingRef  = useRef(false)
+
+  // Refocus input after server re-render while typing
+  useEffect(() => {
+    if (isTypingRef.current) inputRef.current?.focus()
+  })
 
   useEffect(() => { setLocalQ(search) }, [search])
   useEffect(() => { setLocalV(vehicle) }, [vehicle])
@@ -46,15 +52,16 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
     const base = { q: search, sort, dir: dir ? 'desc' : 'asc', vehicle, page: String(page), per_page: String(perPage), f_status: fStatus }
     const p    = new URLSearchParams({ ...base, ...overrides })
     ;['q','vehicle','f_status'].forEach(k => { if (!p.get(k)) p.delete(k) })
-    startTransition(() => router.push(`${pathname}?${p.toString()}`))
+    startTransition(() => router.replace(`${pathname}?${p.toString()}`, { scroll: false }))
   }, [search, sort, dir, vehicle, page, perPage, fStatus, pathname, router])
 
   function handleSearch(val: string) {
     setLocalQ(val)
+    isTypingRef.current = true
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
+      isTypingRef.current = false
       nav({ q: val, page: '0' })
-      requestAnimationFrame(() => inputRef.current?.focus())
     }, 350)
   }
 

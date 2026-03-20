@@ -1,9 +1,10 @@
 'use client'
-import { useState, useTransition, useCallback, useRef } from 'react'
+import { useState, useTransition, useCallback, useRef, useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import VehiclePanel from '@/components/VehiclePanel'
 import ColumnPicker from '@/components/ColumnPicker'
 import { exportToCsv } from '@/lib/exportCsv'
+import { fleetColor } from '@/lib/filters'
 import type { FleetOverview } from '@/types'
 
 interface Props {
@@ -76,6 +77,16 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   // useState(search) sets the initial value correctly from the URL.
   // Syncing on prop change would overwrite what the user is typing mid-debounce.
 
+  // Re-focus the input after every server render while the user is typing.
+  // router.replace() during startTransition causes React to blur the input.
+  // We need useEffect here (not in the debounce callback) because useEffect
+  // fires AFTER React has committed the new render to the DOM.
+  useEffect(() => {
+    if (isTypingRef.current) {
+      inputRef.current?.focus()
+    }
+  })
+
   const nav = useCallback((overrides: Record<string, string> = {}) => {
     const base: Record<string, string> = {
       q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc',
@@ -86,7 +97,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
     const p = new URLSearchParams({ ...base, ...overrides })
     // Remove empty filter params for clean URLs
     ;['f_status','f_fleet','f_meter','f_tab','f_driver_app','f_pim_app','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
-    startTransition(() => router.push(`${pathname}?${p.toString()}`))
+    startTransition(() => router.replace(`${pathname}?${p.toString()}`, { scroll: false }))
   }, [search, page, sort, dir, perPage, fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp, pathname, router])
 
   function handleSort(col: string) {
@@ -104,8 +115,6 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
     debounceRef.current = setTimeout(() => {
       isTypingRef.current = false
       nav({ q: val, page: '0' })
-      // Restore focus to input after router.push() steals it
-      requestAnimationFrame(() => inputRef.current?.focus())
     }, 400)
   }
 
@@ -120,7 +129,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   function cellValue(v: FleetOverview, key: string): React.ReactNode {
     switch (key) {
       case 'vehicle_number': return <span style={{ fontWeight: 700, color: 'var(--accent)' }}>{v.vehicle_number}</span>
-      case 'fleet_id':       return <span className="badge badge-gray">{String(v.fleet_id ?? '').toUpperCase()}</span>
+      case 'fleet_id': { const fc = fleetColor(v.fleet_id); return <span className="badge" style={{ background: `${fc}22`, color: fc, border: `1px solid ${fc}44` }}>{String(v.fleet_id ?? '').toUpperCase()}</span> }
       case 'online_status': {
         const s = String(v.online_status ?? '').toLowerCase()
         const color = s.startsWith('online') ? 'badge-green' : s.startsWith('offline') ? 'badge-amber' : 'badge-gray'

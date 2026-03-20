@@ -12,10 +12,29 @@ export type Office   = typeof OFFICES[number]
 export type SheetTab = typeof SHEET_TABS[number]
 
 export const OFFICE_COLORS: Record<Office, string> = {
-  ASC: '#2563eb',
-  CYC: '#d97706',
-  SDY: '#16a34a',
-  DEN: '#9b59b6',
+  ASC: '#3b82f6',   // blue
+  CYC: '#f97316',   // orange  (distinct from amber Test filter)
+  SDY: '#06b6d4',   // cyan    (distinct from green Active filter)
+  DEN: '#9b59b6',   // purple
+}
+
+// Map fleet_id letter to its office color
+export function fleetColor(fleetId: string | null | undefined): string {
+  const f = (fleetId ?? '').toUpperCase()
+  if (f === 'C') return OFFICE_COLORS.CYC
+  if (f === 'G') return OFFICE_COLORS.SDY
+  if (f === 'D') return OFFICE_COLORS.DEN
+  if (['E','L','S','Y','U'].includes(f)) return OFFICE_COLORS.ASC
+  return '#6b7280'
+}
+
+export function officeColor(office: string | null | undefined): string {
+  const o = (office ?? '').toUpperCase()
+  if (o === 'CYC') return OFFICE_COLORS.CYC
+  if (o === 'SDY') return OFFICE_COLORS.SDY
+  if (o === 'DEN') return OFFICE_COLORS.DEN
+  if (o === 'ASC') return OFFICE_COLORS.ASC
+  return '#6b7280'
 }
 
 export const SUB_ACCOUNT_OFFICE: Record<string, string> = {

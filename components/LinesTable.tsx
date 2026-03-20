@@ -6,6 +6,7 @@ import VehiclePanel from '@/components/VehiclePanel'
 import ColumnPicker from '@/components/ColumnPicker'
 import UsageMeter from '@/components/UsageMeter'
 import { exportToCsv } from '@/lib/exportCsv'
+import { fleetColor, officeColor } from '@/lib/filters'
 import type { FleetOverview } from '@/types'
 
 interface Props {
@@ -42,8 +43,14 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
   const { vehicle: panelVehicle, error: panelError, openByNumber, close } = useVehiclePanel()
   const [localQ,      setLocalQ]      = useState(search)
   const [visibleCols, setVisibleCols] = useState(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inputRef    = useRef<HTMLInputElement>(null)
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef     = useRef<HTMLInputElement>(null)
+  const isTypingRef  = useRef(false)
+
+  // Refocus input after server re-render while typing
+  useEffect(() => {
+    if (isTypingRef.current) inputRef.current?.focus()
+  })
 
   useEffect(() => { setLocalQ(search) }, [search])
 
@@ -51,15 +58,16 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
     const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), tab: activeTab, f_role: fRole, f_status: fStatus, f_vehicle: fVehicle }
     const p    = new URLSearchParams({ ...base, ...overrides })
     ;['f_role','f_status','f_vehicle','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
-    startTransition(() => router.push(`${pathname}?${p.toString()}`))
+    startTransition(() => router.replace(`${pathname}?${p.toString()}`, { scroll: false }))
   }, [search, page, sort, dir, perPage, activeTab, fRole, fStatus, fVehicle, pathname, router])
 
   function handleSearch(val: string) {
     setLocalQ(val)
+    isTypingRef.current = true
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
+      isTypingRef.current = false
       nav({ q: val, page: '0' })
-      requestAnimationFrame(() => inputRef.current?.focus())
     }, 350)
   }
 
@@ -81,7 +89,7 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
   function cellValue(l: Record<string,unknown>, key: string): React.ReactNode {
     switch (key) {
       case 'phone_number': return <span className="mono" style={{ fontWeight: 500 }}>{String(l.phone_number ?? '—')}</span>
-      case 'office': return l.office ? <span className="badge badge-gray">{String(l.office)}</span> : <span className="text-dim">—</span>
+      case 'office': { if (!l.office) return <span className="text-dim">—</span>; const oc = officeColor(l.office as string); return <span className="badge" style={{ background: `${oc}22`, color: oc, border: `1px solid ${oc}44` }}>{String(l.office)}</span> }
       case 'vehicle': return l.vehicle_number
         ? <span style={{ fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}
             onClick={e => { e.stopPropagation(); openByNumber(l.vehicle_number as number, l.fleet_id as string) }}>

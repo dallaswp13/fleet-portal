@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { fleetColor } from '@/lib/filters'
 import { OFFICES, ASC_FLEETS, getFleetIdsFromFilters, type Office } from '@/lib/filters'
 
 interface Driver {
@@ -244,7 +245,7 @@ function DriversContent() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <span className="badge badge-gray">{d.fleet_id.toUpperCase()}</span>
+                <span className="badge" style={{ background: `${fleetColor(d.fleet_id)}22`, color: fleetColor(d.fleet_id), border: `1px solid ${fleetColor(d.fleet_id)}44` }}>{d.fleet_id.toUpperCase()}</span>
                 {d.seated_vehicle_number && <span className="tag" style={{ fontSize: 10 }}>#{d.seated_vehicle_number}</span>}
                 {!d.active && <span className="badge badge-gray">Inactive</span>}
                 {d.personal_phone && <span style={{ fontSize: 10, color: 'var(--green)' }}>📱</span>}

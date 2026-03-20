@@ -47,8 +47,14 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
   const { vehicle: panelVehicle, error: panelError, openByNumber, close } = useVehiclePanel()
   const [localQ,      setLocalQ]      = useState(search)
   const [visibleCols, setVisibleCols] = useState(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inputRef    = useRef<HTMLInputElement>(null)
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef     = useRef<HTMLInputElement>(null)
+  const isTypingRef  = useRef(false)
+
+  // Refocus input after server re-render while typing
+  useEffect(() => {
+    if (isTypingRef.current) inputRef.current?.focus()
+  })
 
   useEffect(() => { setLocalQ(search) }, [search])
 
@@ -56,15 +62,16 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
     const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel, f_os: fOs, f_policy: fPolicy }
     const p    = new URLSearchParams({ ...base, ...overrides })
     ;['f_type','f_compliance','f_model','f_os','f_policy','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
-    startTransition(() => router.push(`${pathname}?${p.toString()}`))
+    startTransition(() => router.replace(`${pathname}?${p.toString()}`, { scroll: false }))
   }, [search, page, sort, dir, perPage, fType, fCompliance, fModel, fOs, fPolicy, pathname, router])
 
   function handleSearch(val: string) {
     setLocalQ(val)
+    isTypingRef.current = true
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
+      isTypingRef.current = false
       nav({ q: val, page: '0' })
-      requestAnimationFrame(() => inputRef.current?.focus())
     }, 350)
   }
 

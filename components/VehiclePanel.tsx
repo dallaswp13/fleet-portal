@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { FleetOverview } from '@/types'
+import { fleetColor, officeColor } from '@/lib/filters'
 
 interface Props { vehicle: FleetOverview; onClose: () => void; onSaved?: (updated: FleetOverview) => void }
 type PanelTab = 'vehicle' | 'tablets' | 'driver' | 'notes' | 'messages' | 'transactions'
@@ -270,8 +271,8 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
             <div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                 <span style={{ fontSize: 26, fontWeight: 800, color: 'var(--accent)', letterSpacing: '-0.02em' }}>#{v.vehicle_number}</span>
-                <span className="badge badge-gray" style={{ fontSize: 12 }}>{(v.fleet_id ?? '').toUpperCase()}</span>
-                {v.office && <span className="badge badge-blue" style={{ fontSize: 12 }}>{v.office}</span>}
+                <span className="badge" style={{ fontSize: 12, background: `${fleetColor(v.fleet_id)}22`, color: fleetColor(v.fleet_id), border: `1px solid ${fleetColor(v.fleet_id)}44` }}>{(v.fleet_id ?? '').toUpperCase()}</span>
+                {v.office && <span className="badge" style={{ fontSize: 12, background: `${officeColor(v.office)}22`, color: officeColor(v.office), border: `1px solid ${officeColor(v.office)}44` }}>{v.office}</span>}
               </div>
               <div style={{ fontSize: 12, color: statusColor, fontWeight: 500, marginTop: 2 }}>{statusLabel}</div>
             </div>

@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server'
 import { Suspense } from 'react'
 import DevicesTable from '@/components/DevicesTable'
 import { getOfficesFromParam, getAscFleetsFromParam, getFleetIdsFromFilters } from '@/lib/filters'
-import { unstable_cache } from 'next/cache'
 
 const DEFAULT_PER_PAGE = 50
 
@@ -67,21 +66,12 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     query = query.or(`device_name.ilike.${like},m360_user.ilike.${like},tablet_model.ilike.${like},imei.ilike.${like}`)
   }
 
-  // Fetch distinct filter values — cached 5 min, rarely change
-  const getFilterValues = unstable_cache(
-    async () => {
-      const { createClient: mkClient } = await import('@/lib/supabase/server')
-      const sb = await mkClient()
-      const { data } = await sb.from('devices').select('android_os, m360_policy').not('android_os', 'is', null).limit(3000)
-      const os  = Array.from(new Set((data ?? []).map((d: Record<string,unknown>) => d.android_os).filter(Boolean))).sort() as string[]
-      const pol = Array.from(new Set((data ?? []).map((d: Record<string,unknown>) => d.m360_policy).filter(Boolean))).sort() as string[]
-      return { os, pol }
-    },
-    ['device-filter-values'],
-    { revalidate: 300 }
-  )
-  const [{ data, count }, { os: osValues, pol: policyValues }] =
-    await Promise.all([query, getFilterValues()])
+  const [{ data, count }, { data: filterData }] = await Promise.all([
+    query,
+    supabase.from('devices').select('android_os, m360_policy').not('android_os', 'is', null).limit(3000),
+  ])
+  const osValues     = Array.from(new Set((filterData ?? []).map(d => d.android_os).filter(Boolean))).sort() as string[]
+  const policyValues = Array.from(new Set((filterData ?? []).map(d => d.m360_policy).filter(Boolean))).sort() as string[]
 
   return (
     <div className="page-content">
