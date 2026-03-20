@@ -14,8 +14,12 @@ export async function POST(req: NextRequest) {
   const { email, is_admin = false, offices = null } = await req.json()
   if (!email) return NextResponse.json({ error: 'email is required' }, { status: 400 })
 
-  // Send Supabase invite email
-  const { data: invited, error } = await service.auth.admin.inviteUserByEmail(email)
+  // Send Supabase invite email — redirectTo ensures the link points to the
+  // live site, not localhost (which Supabase falls back to if Site URL is unset)
+  const origin = req.nextUrl.origin
+  const { data: invited, error } = await service.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${origin}/`,
+  })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Create user_profile with permissions
