@@ -37,6 +37,7 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
   const [localQ, setLocalQ]   = useState(search)
   const [localV, setLocalV]   = useState(vehicle)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef    = useRef<HTMLInputElement>(null)
 
   useEffect(() => { setLocalQ(search) }, [search])
   useEffect(() => { setLocalV(vehicle) }, [vehicle])
@@ -51,7 +52,10 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
   function handleSearch(val: string) {
     setLocalQ(val)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => nav({ q: val, page: '0' }), 350)
+    debounceRef.current = setTimeout(() => {
+      nav({ q: val, page: '0' })
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }, 350)
   }
 
   function handleVehicle(val: string) {
@@ -90,7 +94,7 @@ export default function TransactionsTable({ transactions, page, perPage, totalPa
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => handleSearch(e.target.value)}
+          <input ref={inputRef} value={localQ} onChange={e => handleSearch(e.target.value)}
             placeholder="Search ID, location, description…" style={{ height: 36 }} />
         </div>
         <div className="search-wrap" style={{ width: 160 }}>

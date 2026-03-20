@@ -64,7 +64,10 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
         ))}
       </div>
 
-      <div style={{ marginTop: 'auto', padding: '12px 8px', borderTop: '1px solid var(--border)' }}>
+      </div>
+
+      {/* Always pinned to bottom of sidebar */}
+      <div style={{ marginTop: 'auto', padding: '12px 8px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
         <div style={{ padding: '8px 10px', marginBottom: 4 }}>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 2 }}>Signed in as</div>
           <div style={{ fontSize: 12, color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{userEmail}</div>
@@ -78,7 +81,6 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
           </svg>
           Sign out
         </button>
-      </div>
       </div>
     </aside>
   )

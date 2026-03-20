@@ -70,6 +70,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
   const [visibleCols, setVisibleCols] = useState<string[]>(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
   const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isTypingRef  = useRef(false)
+  const inputRef     = useRef<HTMLInputElement>(null)
 
   // Intentionally NOT syncing localQ from search prop on every re-render.
   // useState(search) sets the initial value correctly from the URL.
@@ -103,6 +104,8 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
     debounceRef.current = setTimeout(() => {
       isTypingRef.current = false
       nav({ q: val, page: '0' })
+      // Restore focus to input after router.push() steals it
+      requestAnimationFrame(() => inputRef.current?.focus())
     }, 400)
   }
 
@@ -149,7 +152,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 260px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 36 }} />
+          <input ref={inputRef} value={localQ} onChange={e => handleSearch(e.target.value)} placeholder="Search vehicle #, phone, RFID…" style={{ height: 36 }} />
         </div>
 
         {/* Per-page selector */}

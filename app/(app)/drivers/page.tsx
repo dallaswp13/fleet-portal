@@ -240,7 +240,7 @@ function DriversContent() {
                 )}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name ?? '—'}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)' }}>Lease #{d.driver_id}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--accent)', letterSpacing: '-0.01em' }}>{d.driver_id}</div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

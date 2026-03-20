@@ -493,7 +493,7 @@ export default function SmsPage() {
                       </td>
                       <td className="mono text-dim" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(m.received_at).toLocaleString()}</td>
                       <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.sender}</td>
-                      <td style={{ fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.sms_text}>{m.sms_text}</td>
+                      <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
                       <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
                       <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
                       <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>

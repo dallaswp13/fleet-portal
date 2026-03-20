@@ -48,6 +48,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
   const [localQ,      setLocalQ]      = useState(search)
   const [visibleCols, setVisibleCols] = useState(ALL_COLS.filter(c => c.defaultVisible !== false).map(c => c.key))
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const inputRef    = useRef<HTMLInputElement>(null)
 
   useEffect(() => { setLocalQ(search) }, [search])
 
@@ -61,7 +62,10 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
   function handleSearch(val: string) {
     setLocalQ(val)
     if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => nav({ q: val, page: '0' }), 350)
+    debounceRef.current = setTimeout(() => {
+      nav({ q: val, page: '0' })
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }, 350)
   }
 
   function handleSort(col: string) { nav({ sort: col, dir: sort === col && dir ? 'desc' : 'asc', page: '0' }) }
@@ -98,7 +102,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="search-wrap" style={{ flex: '1 1 220px' }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={localQ} onChange={e => handleSearch(e.target.value)}
+          <input ref={inputRef} value={localQ} onChange={e => handleSearch(e.target.value)}
             placeholder="Search device, model, IMEI…" style={{ height: 36 }} />
         </div>
         {activeFilters > 0 && (
