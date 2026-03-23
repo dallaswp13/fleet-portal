@@ -7,25 +7,22 @@ export default function SetPasswordPage() {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [ready,    setReady]    = useState(false)   // session established from invite token
+  const [ready,    setReady]    = useState(false)
   const [password, setPassword] = useState('')
   const [confirm,  setConfirm]  = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
 
   useEffect(() => {
-    // Supabase picks up the invite token from the URL hash automatically.
-    // Wait for the auth state to settle, then confirm we have a session.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session) setReady(true)
-    })
-
-    // Also check immediately in case the session is already set
+    // The /auth/callback route already exchanged the invite code for a session
+    // and stored it in cookies. Just confirm the session exists.
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setReady(true)
+      if (session) {
+        setReady(true)
+      } else {
+        router.push('/login')
+      }
     })
-
-    return () => subscription.unsubscribe()
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -66,16 +63,14 @@ export default function SetPasswordPage() {
           <p style={{ color: 'var(--text2)', fontSize: 13, marginTop: 4 }}>Create your password to get started</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="card" style={{ padding: '28px' }}>
-          {!ready && (
+        <div className="card" style={{ padding: '28px' }}>
+          {!ready ? (
             <div style={{ textAlign: 'center', padding: '12px 0', color: 'var(--text3)', fontSize: 13 }}>
               <span className="spinner" style={{ borderTopColor: 'var(--accent)', marginRight: 8 }} />
-              Verifying your invite link…
+              Verifying your invite…
             </div>
-          )}
-
-          {ready && (
-            <>
+          ) : (
+            <form onSubmit={handleSubmit}>
               {error && (
                 <div className="alert alert-error" style={{ marginBottom: 16 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
@@ -104,9 +99,9 @@ export default function SetPasswordPage() {
                   ? <><span className="spinner" style={{ borderTopColor: 'white' }} /> Setting password…</>
                   : 'Set password & sign in'}
               </button>
-            </>
+            </form>
           )}
-        </form>
+        </div>
       </div>
     </div>
   )
