@@ -20,10 +20,20 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   const sort      = params.sort ?? 'device_name'
   const dir       = params.dir !== 'desc'
 
-  const offices   = getOfficesFromParam(params.offices)
+  const supabase  = await createClient()
+
+  // Enforce per-user office restriction
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user!.id).single()
+  const userOfficeRestriction: string[] | null = (!profile?.is_admin && Array.isArray(profile?.offices) && profile.offices.length > 0)
+    ? profile.offices : null
+  const rawOffices = getOfficesFromParam(params.offices)
+  const offices    = userOfficeRestriction
+    ? (rawOffices === null ? userOfficeRestriction : rawOffices.filter((o: string) => userOfficeRestriction.includes(o)))
+    : rawOffices
+
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const fleetIds  = getFleetIdsFromFilters(offices, ascFleets)
-  const supabase  = await createClient()
 
   let allowedNameKeys: string[] | null = null
   if (fleetIds !== null) {

@@ -31,13 +31,23 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
   const fDriverApp = params.f_driver_app ?? ''
   const fPimApp    = params.f_pim_app    ?? ''
 
-  const offices   = getOfficesFromParam(params.offices)
+  const supabase = await createClient()
+
+  // Enforce per-user office restriction — users can only see their assigned offices
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user!.id).single()
+  const userOfficeRestriction: string[] | null = (!profile?.is_admin && Array.isArray(profile?.offices) && profile.offices.length > 0)
+    ? profile.offices : null
+  const rawOffices = getOfficesFromParam(params.offices)
+  const offices    = userOfficeRestriction
+    ? (rawOffices === null ? userOfficeRestriction : rawOffices.filter((o: string) => userOfficeRestriction.includes(o)))
+    : rawOffices
+
   const tabs      = getTabsFromParam(params.tabs)
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const allTabs   = tabs.length === SHEET_TABS.length
 
   const fleetIds = getFleetIdsFromFilters(offices, ascFleets)
-  const supabase = await createClient()
 
   let query = supabase
     .from('fleet_overview')

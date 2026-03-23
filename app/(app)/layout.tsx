@@ -12,9 +12,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .single()
+  const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
+
   return (
     <div className="app-shell">
-      <Sidebar userEmail={user.email ?? ''} />
+      <Sidebar userEmail={user.email ?? ''} isAdmin={isAdmin} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="topbar">
           <Suspense>

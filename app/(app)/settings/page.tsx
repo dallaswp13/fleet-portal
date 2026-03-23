@@ -46,10 +46,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const totalPages = Math.ceil((count ?? 0) / PER_PAGE)
 
   const tabDef = [
-    { key: 'audit',      label: '📋 Audit Log'       },
-    { key: 'db',         label: '⬆️ Update Database'  },
-    { key: 'roadmap',    label: '🗺️ Roadmap'          },
-    ...(canManageUsers ? [{ key: 'users', label: '👥 Manage Users' }, { key: 'invoice', label: '🧾 Generate Invoice' }] : []),
+    { key: 'audit',   label: '📋 Audit Log'  },
+    { key: 'roadmap', label: '🗺️ Roadmap'    },
+    ...(canManageUsers ? [
+      { key: 'db',      label: '⬆️ Update Database' },
+      { key: 'users',   label: '👥 Manage Users'     },
+      { key: 'invoice', label: '🧾 Generate Invoice'  },
+    ] : []),
   ]
 
   function tabStyle(t: string): React.CSSProperties {

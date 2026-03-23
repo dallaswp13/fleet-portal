@@ -31,11 +31,20 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
   const fStatus   = params.f_status ?? ''
   const fVehicle  = params.f_vehicle ?? ''
 
-  const offices   = getOfficesFromParam(params.offices)
+  const supabase  = await createClient()
+
+  // Enforce per-user office restriction
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user!.id).single()
+  const userOfficeRestriction: string[] | null = (!profile?.is_admin && Array.isArray(profile?.offices) && profile.offices.length > 0)
+    ? profile.offices : null
+  const rawOffices = getOfficesFromParam(params.offices)
+  const offices    = userOfficeRestriction
+    ? (rawOffices === null ? userOfficeRestriction : rawOffices.filter((o: string) => userOfficeRestriction.includes(o)))
+    : rawOffices
+
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const fleetIds  = getFleetIdsFromFilters(offices, ascFleets)
-
-  const supabase  = await createClient()
 
   // Build office list
   const officeList: string[] = []

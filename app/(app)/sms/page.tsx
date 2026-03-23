@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 interface SmsMessage {
@@ -76,6 +77,18 @@ function VehicleSearch({ vehicles, value, onChange }: {
 }
 
 export default function SmsPage() {
+  const router = useRouter()
+
+  // Admin-only page — redirect non-admins immediately
+  useEffect(() => {
+    const sb = createClient()
+    sb.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) { router.push('/'); return }
+      const { data: profile } = await sb.from('user_profiles').select('is_admin').eq('id', user.id).single()
+      if (!profile?.is_admin) router.push('/')
+    })
+  }, [])
+
   const [messages,    setMessages]    = useState<SmsMessage[]>([])
   const [rules,       setRules]       = useState<SmsRule[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(true)

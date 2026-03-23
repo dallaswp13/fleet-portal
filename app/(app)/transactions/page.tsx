@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { Suspense } from 'react'
 import TransactionsTable from '@/components/TransactionsTable'
+import { redirect } from 'next/navigation'
 
 const DEFAULT_PER_PAGE = 50
 
@@ -20,6 +21,12 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const fStatus = params.f_status ?? ''
 
   const supabase = await createClient()
+
+  // Admin-only page
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin').eq('id', user!.id).single()
+  const isAdmin = profile?.is_admin === true || user!.email === (process.env.ADMIN_EMAIL ?? '')
+  if (!isAdmin) redirect('/')
 
   const { count: totalCount } = await supabase
     .from('transactions').select('*', { count: 'exact', head: true })

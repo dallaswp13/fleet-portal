@@ -19,7 +19,7 @@ const settingsNav = [
   { href: '/settings',  label: 'Settings',  icon: '⚙️' },
 ]
 
-export default function Sidebar({ userEmail }: { userEmail: string }) {
+export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isAdmin: boolean }) {
   const pathname = usePathname()
   const router   = useRouter()
 
@@ -44,13 +44,18 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
       <div className="sidebar-sections-wrap">
       <div className="sidebar-section">
         <div className="sidebar-section-label">Navigation</div>
-        {mainNav.map(item => (
-          <Link key={item.href} href={item.href}
-            className={`nav-item ${pathname === item.href ? 'active' : ''}`}>
-            <span style={{ fontSize: 15 }}>{item.icon}</span>
-            {item.label}
-          </Link>
-        ))}
+        {mainNav
+          .filter(item => {
+            if (item.href === '/sms' || item.href === '/transactions') return isAdmin
+            return true
+          })
+          .map(item => (
+            <Link key={item.href} href={item.href}
+              className={`nav-item ${pathname === item.href ? 'active' : ''}`}>
+              <span style={{ fontSize: 15 }}>{item.icon}</span>
+              {item.label}
+            </Link>
+          ))}
       </div>
 
       <div className="sidebar-section">
