@@ -36,8 +36,14 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
   // Enforce per-user office restriction — users can only see their assigned offices
   const { data: { user } } = await supabase.auth.getUser()
   const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user!.id).single()
-  const userOfficeRestriction: string[] | null = (!profile?.is_admin && Array.isArray(profile?.offices) && profile.offices.length > 0)
-    ? profile.offices : null
+  const adminEmail = process.env.ADMIN_EMAIL ?? ''
+  const isAdminByEmail = adminEmail && user!.email === adminEmail
+  const userOfficeRestriction: string[] | null =
+    (profile?.is_admin === true || isAdminByEmail)
+      ? null               // admins: unrestricted
+      : !profile
+        ? []               // no profile row: safety fallback — show nothing
+        : profile.offices  // null = all offices, array = specific offices
   const rawOffices = getOfficesFromParam(params.offices)
   const offices    = userOfficeRestriction
     ? (rawOffices === null ? userOfficeRestriction : rawOffices.filter((o: string) => userOfficeRestriction.includes(o)))

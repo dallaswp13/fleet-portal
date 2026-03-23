@@ -30,6 +30,19 @@ export default function SetPasswordPage() {
         if (sessionError) { setError(sessionError.message); return }
         // Clear the tokens from the URL bar without triggering a navigation
         window.history.replaceState(null, '', window.location.pathname)
+        // Ensure a profile row exists — created at invite time, but create as
+        // a fallback in case the upsert failed server-side (ignoreDuplicates
+        // means this is a no-op if the row already exists with correct data).
+        const { data: { user: authedUser } } = await supabase.auth.getUser()
+        if (authedUser) {
+          await supabase.from('user_profiles').upsert({
+            id:           authedUser.id,
+            email:        authedUser.email ?? '',
+            is_admin:     false,
+            offices:      null,
+            display_name: null,
+          }, { onConflict: 'id', ignoreDuplicates: true })
+        }
         setReady(true)
         return
       }

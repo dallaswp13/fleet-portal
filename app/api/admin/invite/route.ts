@@ -24,13 +24,17 @@ export async function POST(req: NextRequest) {
 
   // Create user_profile with permissions
   if (invited?.user?.id) {
-    await service.from('user_profiles').upsert({
+    const { error: profileErr } = await service.from('user_profiles').upsert({
       id:           invited.user.id,
       email,
       is_admin:     is_admin ?? false,
       offices:      offices ?? null,
       display_name: null,
     }, { onConflict: 'id' })
+    if (profileErr) {
+      console.error('[invite] profile upsert failed:', profileErr.message)
+      return NextResponse.json({ error: `Invite sent but profile creation failed: ${profileErr.message}` }, { status: 500 })
+    }
   }
 
   return NextResponse.json({ success: true, userId: invited?.user?.id })
