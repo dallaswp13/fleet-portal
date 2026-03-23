@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   // live site, not localhost (which Supabase falls back to if Site URL is unset)
   const origin = req.nextUrl.origin
   const { data: invited, error } = await service.auth.admin.inviteUserByEmail(email, {
-    redirectTo: `${origin}/auth/callback?next=/set-password`,
+    redirectTo: `${origin}/set-password`,
   })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

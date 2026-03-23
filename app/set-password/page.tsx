@@ -14,15 +14,35 @@ export default function SetPasswordPage() {
   const [error,    setError]    = useState('')
 
   useEffect(() => {
-    // The /auth/callback route already exchanged the invite code for a session
-    // and stored it in cookies. Just confirm the session exists.
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
+    async function establish() {
+      // Supabase uses implicit flow — tokens arrive in the URL hash (#access_token=...&type=invite)
+      // Browsers never send the hash to the server, so we must handle it here on the client.
+      const hash   = window.location.hash.substring(1)
+      const params = new URLSearchParams(hash)
+      const accessToken  = params.get('access_token')
+      const refreshToken = params.get('refresh_token')
+
+      if (accessToken && refreshToken) {
+        const { error: sessionError } = await supabase.auth.setSession({
+          access_token:  accessToken,
+          refresh_token: refreshToken,
+        })
+        if (sessionError) { setError(sessionError.message); return }
+        // Clear the tokens from the URL bar without triggering a navigation
+        window.history.replaceState(null, '', window.location.pathname)
         setReady(true)
-      } else {
-        router.push('/login')
+        return
       }
-    })
+
+      // No hash tokens — check if there's already an active session (e.g. page refresh)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) { setReady(true); return }
+
+      // Nothing — send back to login
+      router.push('/login')
+    }
+
+    establish()
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -100,6 +120,12 @@ export default function SetPasswordPage() {
                   : 'Set password & sign in'}
               </button>
             </form>
+          )}
+          {error && !ready && (
+            <div className="alert alert-error" style={{ marginTop: 12 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              {error}
+            </div>
           )}
         </div>
       </div>
