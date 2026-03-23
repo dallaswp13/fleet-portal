@@ -41,7 +41,7 @@ export default function UserManager({ currentUserEmail }: { currentUserEmail: st
         body: JSON.stringify({
           email:     newEmail.trim(),
           is_admin:  newAdmin,
-          offices:   newOffices.length === OFFICES.length ? null : newOffices,
+          offices:   newOffices,
         })
       })
       const data = await res.json()
@@ -102,7 +102,7 @@ export default function UserManager({ currentUserEmail }: { currentUserEmail: st
             <div style={{ display: 'flex', gap: 4 }}>
               <button onClick={() => setNewAdmin(false)}
                 style={{ height: 24, padding: '0 10px', fontSize: 11, borderRadius: 100, cursor: 'pointer', border: '1px solid', fontWeight: !newAdmin ? 600 : 400,
-                  background: !newAdmin ? 'var(--bg4)' : 'transparent', color: !newAdmin ? 'var(--text)' : 'var(--text3)', borderColor: !newAdmin ? 'var(--border2)' : 'var(--border)' }}>
+                  background: !newAdmin ? 'var(--green)' : 'transparent', color: !newAdmin ? '#fff' : 'var(--text3)', borderColor: !newAdmin ? 'var(--green)' : 'var(--border)' }}>
                 User
               </button>
               <button onClick={() => setNewAdmin(true)}
@@ -178,7 +178,7 @@ function UserRow({ profile: p, isSelf, saving, onSave }: {
   }
 
   function save() {
-    onSave({ display_name: name || null, is_admin: admin, offices: allOffices ? null : offices })
+    onSave({ display_name: name || null, is_admin: admin, offices })
     setEditing(false)
   }
 
@@ -192,16 +192,20 @@ function UserRow({ profile: p, isSelf, saving, onSave }: {
       <td>
         {editing ? (
           <div style={{ display: 'flex', gap: 4 }}>
-            {(['User', 'Admin'] as const).map(r => (
-              <button key={r} onClick={() => setAdmin(r === 'Admin')}
-                style={{ height: 22, padding: '0 8px', fontSize: 10, borderRadius: 100, cursor: 'pointer', border: '1px solid',
-                  background: (r === 'Admin') === admin ? (admin ? 'var(--amber)' : 'var(--bg4)') : 'transparent',
-                  color: (r === 'Admin') === admin ? (admin ? '#fff' : 'var(--text)') : 'var(--text3)',
-                  borderColor: (r === 'Admin') === admin ? (admin ? 'var(--amber)' : 'var(--border2)') : 'var(--border)',
-                  fontWeight: (r === 'Admin') === admin ? 600 : 400 }}>
-                {r}
-              </button>
-            ))}
+            {(['User', 'Admin'] as const).map(r => {
+              const isActive = (r === 'Admin') === admin
+              const activeColor = r === 'Admin' ? 'var(--amber)' : 'var(--green)'
+              return (
+                <button key={r} onClick={() => setAdmin(r === 'Admin')}
+                  style={{ height: 22, padding: '0 8px', fontSize: 10, borderRadius: 100, cursor: 'pointer', border: '1px solid',
+                    background: isActive ? activeColor : 'transparent',
+                    color: isActive ? '#fff' : 'var(--text3)',
+                    borderColor: isActive ? activeColor : 'var(--border)',
+                    fontWeight: isActive ? 600 : 400 }}>
+                  {r}
+                </button>
+              )
+            })}
           </div>
         ) : (
           <span className={`badge ${p.is_admin ? 'badge-amber' : 'badge-gray'}`}>{p.is_admin ? 'Admin' : 'User'}</span>
@@ -222,9 +226,11 @@ function UserRow({ profile: p, isSelf, saving, onSave }: {
           </div>
         ) : (
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {p.offices === null
-              ? <span className="badge badge-gray">All Offices</span>
-              : p.offices.map(o => <span key={o} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 100, background: `${OFFICE_COLORS[o]}22`, color: OFFICE_COLORS[o], border: `1px solid ${OFFICE_COLORS[o]}`, fontWeight: 600 }}>{o}</span>)
+            {!p.offices || p.offices.length === 0
+              ? <span className="badge badge-red" style={{ fontSize: 10 }}>No Access</span>
+              : p.offices.length === OFFICES.length
+                ? <span className="badge badge-gray">All Offices</span>
+                : p.offices.map(o => <span key={o} style={{ fontSize: 10, padding: '1px 6px', borderRadius: 100, background: `${OFFICE_COLORS[o]}22`, color: OFFICE_COLORS[o], border: `1px solid ${OFFICE_COLORS[o]}`, fontWeight: 600 }}>{o}</span>)
             }
           </div>
         )}

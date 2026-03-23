@@ -43,7 +43,7 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
       ? null               // admins: unrestricted
       : !profile
         ? []               // no profile row: safety fallback — show nothing
-        : profile.offices  // null = all offices, array = specific offices
+        : profile.offices ?? []  // null = no offices assigned = show nothing
   const rawOffices = getOfficesFromParam(params.offices)
   const offices    = userOfficeRestriction
     ? (rawOffices === null ? userOfficeRestriction : rawOffices.filter((o: string) => userOfficeRestriction.includes(o)))
