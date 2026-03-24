@@ -6,6 +6,7 @@ import ClaudeSupportToggle from '@/components/ClaudeSupportToggle'
 import M360StatusIndicator from '@/components/M360StatusIndicator'
 import { Suspense } from 'react'
 import OfficeFilter from '@/components/OfficeFilter'
+import { OFFICES, type Office } from '@/lib/filters'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -14,10 +15,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('is_admin')
+    .select('is_admin, offices')
     .eq('id', user.id)
     .single()
   const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
+
+  // Which offices this user is allowed to see — passed to OfficeFilter so it
+  // only renders pills for their permitted offices.
+  // null = unrestricted (admins), [] = no access, [...] = specific offices
+  const allowedOffices: Office[] | null = isAdmin
+    ? null
+    : !profile
+      ? []
+      : profile.offices === null
+        ? []
+        : (profile.offices as string[]).filter((o): o is Office => OFFICES.includes(o as Office))
 
   return (
     <div className="app-shell">
@@ -25,7 +37,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="topbar">
           <Suspense>
-            <OfficeFilter />
+            <OfficeFilter allowedOffices={allowedOffices} />
           </Suspense>
           <div style={{ flex: 1 }} />
           <M360StatusIndicator />
