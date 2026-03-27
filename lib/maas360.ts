@@ -4,7 +4,7 @@
  * IMPORTANT: All process.env reads are inside functions, NOT at module level.
  * This ensures Vercel picks up updated env vars without requiring a cold start.
  *
- * Auth:   POST /auth-apis/auth/1.0/authenticate/customer/{billingID}
+ * Auth:   POST /auth-apis/auth/1.0/authenticate/{billingID}
  * Reboot: POST /device-apis/devices/2.0/reboot/customer/{billingID}/device/{deviceId}
  * Other:  POST /device-apis/devices/1.0/{billingID}/sendAction
  *
@@ -14,13 +14,31 @@
  *   MAAS360_APP_ACCESS_KEY  (or MAAS360_ACCESS_KEY)
  *   MAAS360_USERNAME
  *   MAAS360_PASSWORD
+ *
+ * Token persistence: stored in Supabase `maas360_token` table (id=1) so it
+ * survives across Vercel serverless instances. A cron job at /api/maas360/keepalive
+ * calls MaaS360 every 30 min to prevent the 60-min token expiry.
+ *
+ * Required Supabase table (run once in Supabase SQL editor):
+ *   create table maas360_token (
+ *     id integer primary key default 1,
+ *     token text not null,
+ *     expires_at timestamptz not null,
+ *     updated_at timestamptz not null default now(),
+ *     constraint single_row check (id = 1)
+ *   );
+ *   alter table maas360_token enable row level security;
+ *   -- No RLS policies needed: only service role accesses this table.
  */
 
-let _token: { value: string; expires: number } | null = null
+import { createServiceClient } from '@/lib/supabase/server'
+
+// In-memory cache — fast path within a single serverless instance lifetime
+let _memToken: { value: string; expires: number } | null = null
 
 function cfg() {
   return {
-    BASE_URL:    (process.env.MAAS360_BASE_URL  ?? 'https://services.fiberlink.com').replace(/\/$/, ''),
+    BASE_URL:    (process.env.MAAS360_BASE_URL  ?? 'https://services.m3.maas360.com').replace(/\/$/, ''),
     BILLING_ID:  process.env.MAAS360_BILLING_ID  ?? '',
     PLATFORM_ID: process.env.MAAS360_PLATFORM_ID ?? '5',
     APP_ID:      process.env.MAAS360_APP_ID       ?? '',
@@ -31,29 +49,70 @@ function cfg() {
   }
 }
 
+async function loadTokenFromDb(): Promise<{ value: string; expires: number } | null> {
+  try {
+    const svc = createServiceClient()
+    const { data } = await svc
+      .from('maas360_token')
+      .select('token, expires_at')
+      .eq('id', 1)
+      .single()
+    if (!data) return null
+    const expires = new Date(data.expires_at as string).getTime()
+    if (expires <= Date.now() + 60_000) return null // treat as expired
+    return { value: data.token as string, expires }
+  } catch {
+    return null // DB unavailable — fall through to fresh auth
+  }
+}
+
+async function saveTokenToDb(token: string, expires: number): Promise<void> {
+  try {
+    const svc = createServiceClient()
+    await svc.from('maas360_token').upsert({
+      id: 1,
+      token,
+      expires_at: new Date(expires).toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    console.warn('[maas360] failed to persist token to DB:', e)
+  }
+}
+
 async function getAuthToken(): Promise<string> {
   const now = Date.now()
-  if (_token && _token.expires > now + 60_000) return _token.value
 
+  // 1. Fast path: in-memory cache (same serverless instance)
+  if (_memToken && _memToken.expires > now + 60_000) return _memToken.value
+
+  // 2. Persistent path: Supabase (survives instance recycling)
+  const dbToken = await loadTokenFromDb()
+  if (dbToken) {
+    _memToken = dbToken
+    return dbToken.value
+  }
+
+  // 3. Fetch a fresh token from MaaS360
   const { BASE_URL, BILLING_ID, PLATFORM_ID, APP_ID, APP_VERSION, ACCESS_KEY, USERNAME, PASSWORD } = cfg()
 
   if (!BILLING_ID) throw new Error('MAAS360_BILLING_ID not set')
-  if (!APP_ID)     throw new Error('MAAS360_APP_ID not set — find it in MaaS360 portal: Account → My Account → Application IDs')
+  if (!APP_ID)     throw new Error('MAAS360_APP_ID not set')
   if (!ACCESS_KEY) throw new Error('MAAS360_APP_ACCESS_KEY not set')
   if (!USERNAME)   throw new Error('MAAS360_USERNAME not set')
   if (!PASSWORD)   throw new Error('MAAS360_PASSWORD not set')
 
+  // Body format confirmed from MaaS360 API tester: no outer "authRequest" wrapper
   const body = {
-    authRequest: {
-      maaS360AdminAuth: {
-        billingID: BILLING_ID, platformID: PLATFORM_ID,
-        appID: APP_ID, appVersion: APP_VERSION,
-        appAccessKey: ACCESS_KEY, userName: USERNAME, password: PASSWORD,
-      }
+    maaS360AdminAuth: {
+      billingID: BILLING_ID, platformID: PLATFORM_ID,
+      appID: APP_ID, appVersion: APP_VERSION,
+      appAccessKey: ACCESS_KEY, userName: USERNAME, password: PASSWORD,
     }
   }
 
-  const res  = await fetch(`${BASE_URL}/auth-apis/auth/1.0/authenticate/customer/${BILLING_ID}`, {
+  // Correct URL: /authenticate/{billingID} — no "/customer/" segment
+  const res = await fetch(`${BASE_URL}/auth-apis/auth/1.0/authenticate/${BILLING_ID}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify(body),
@@ -64,16 +123,18 @@ async function getAuthToken(): Promise<string> {
   try { data = JSON.parse(text) } catch { throw new Error(`MaaS360 auth: non-JSON ${res.status} — ${text.slice(0, 200)}`) }
 
   if (!res.ok) {
-    const ar     = data?.authResponse as Record<string,unknown> | undefined
-    const code   = ar?.errorCode
-    const desc   = ar?.errorDesc ?? JSON.stringify(data).slice(0, 200)
+    const ar   = data?.authResponse as Record<string, unknown> | undefined
+    const code = ar?.errorCode
+    const desc = ar?.errorDesc ?? JSON.stringify(data).slice(0, 200)
     throw new Error(`MaaS360 auth failed (HTTP ${res.status}): ${desc} [code ${code}]\nCredentials: billingID=${BILLING_ID}, appID=${APP_ID}, user=${USERNAME}`)
   }
 
-  const token = (data?.authResponse as Record<string,unknown>)?.authToken as string | undefined
+  const token = (data?.authResponse as Record<string, unknown>)?.authToken as string | undefined
   if (!token) throw new Error(`MaaS360 auth: no authToken — ${JSON.stringify(data).slice(0, 200)}`)
 
-  _token = { value: token, expires: Date.now() + 50 * 60 * 1000 }
+  const expires = Date.now() + 50 * 60 * 1000 // cache for 50 min (token valid 60 min)
+  _memToken = { value: token, expires }
+  await saveTokenToDb(token, expires)
   return token
 }
 
@@ -134,7 +195,12 @@ export async function testAuth(): Promise<{ ok: boolean; message: string; creden
     baseUrl:    c.BASE_URL,
   }
   try {
-    _token = null // force fresh auth so we always test current env vars
+    // Force fresh auth so we always test current env vars (bypasses both caches)
+    _memToken = null
+    try {
+      const svc = createServiceClient()
+      await svc.from('maas360_token').delete().eq('id', 1)
+    } catch { /* ignore if table doesn't exist yet */ }
     const token = await getAuthToken()
     return { ok: true, message: `Auth OK. Token: ${token.slice(0, 8)}…`, credentials }
   } catch (err) {
