@@ -22,7 +22,7 @@ function cfg() {
   return {
     BASE_URL:    (process.env.MAAS360_BASE_URL  ?? 'https://services.fiberlink.com').replace(/\/$/, ''),
     BILLING_ID:  process.env.MAAS360_BILLING_ID  ?? '',
-    PLATFORM_ID: process.env.MAAS360_PLATFORM_ID ?? '3',
+    PLATFORM_ID: process.env.MAAS360_PLATFORM_ID ?? '5',
     APP_ID:      process.env.MAAS360_APP_ID       ?? '',
     APP_VERSION: process.env.MAAS360_APP_VERSION  ?? '1.0',
     ACCESS_KEY:  process.env.MAAS360_APP_ACCESS_KEY ?? process.env.MAAS360_ACCESS_KEY ?? '',
