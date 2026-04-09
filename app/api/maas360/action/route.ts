@@ -91,9 +91,10 @@ export async function POST(req: NextRequest) {
     success: result.success
   })
 
+  const detail = result.raw && typeof result.raw === 'object' ? JSON.stringify(result.raw).slice(0, 300) : ''
   return NextResponse.json({
     success: result.success,
-    message: result.success ? `${action} sent successfully` : `${action} returned non-OK status`,
+    message: result.success ? `${action} sent successfully` : `${action} failed${detail ? `: ${detail}` : ''}`,
     data: result.raw
   })
 }

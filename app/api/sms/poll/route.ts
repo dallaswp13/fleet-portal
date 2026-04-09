@@ -5,6 +5,7 @@ import { runRuleOnMessage } from '@/lib/smsActions'
 // Intent parsing prompt - no M360 actions needed for basic parsing
 const SYSTEM_PROMPT = `You are an IT support assistant for a taxi fleet company.
 Drivers from ASC fleets (sub-fleets E, L, S, Y, U) text a support line with IT requests.
+Drivers come from many backgrounds and may text in ANY language (Spanish, Armenian, Farsi, Russian, etc).
 Extract structured data from their message.
 
 IMPORTANT patterns to recognize:
@@ -12,6 +13,7 @@ IMPORTANT patterns to recognize:
 - "Lease no:25343" or "Lease #25343" → lease_number (driver ID, typically 5 digits)
 - "NoP" or "NOP" or "no payment" or "payment not working" → PIM issue → reboot_pim
 - Vehicle numbers are 1-4 digits. Lease numbers are typically 5 digits — do NOT confuse them.
+- If the message is NOT in English, translate it to English and detect the language.
 
 Respond ONLY with valid JSON — no explanation, no markdown:
 {
@@ -20,7 +22,9 @@ Respond ONLY with valid JSON — no explanation, no markdown:
   "lease_number": "<5+ digit lease number if found, else empty>",
   "target": "driver"|"pim"|"unknown",
   "confidence": "high"|"medium"|"low",
-  "reason": "<brief explanation if not high confidence, else empty>"
+  "reason": "<brief explanation if not high confidence, else empty>",
+  "translated_text": "<English translation if message is NOT in English, else empty>",
+  "source_language": "<detected language name like Spanish, Armenian, Farsi, Russian, etc — only if NOT English, else empty>"
 }`
 
 function normalizePhone(s: string): string {
@@ -52,21 +56,24 @@ function extractLeaseNumber(text: string): string {
 
 async function parseWithClaude(smsText: string): Promise<{
   action: string; vehicle_number: string; lease_number: string; target: string; confidence: string; reason: string
+  translated_text: string; source_language: string
 }> {
   const apiKey = process.env.ANTHROPIC_API_KEY
-  const fallback = { action: 'unknown', vehicle_number: extractVehicleNumber(smsText), lease_number: extractLeaseNumber(smsText), target: 'unknown', confidence: 'low', reason: 'No API key' }
+  const fallback = { action: 'unknown', vehicle_number: extractVehicleNumber(smsText), lease_number: extractLeaseNumber(smsText), target: 'unknown', confidence: 'low', reason: 'No API key', translated_text: '', source_language: '' }
   if (!apiKey) return fallback
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 300, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: smsText }] })
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 500, system: SYSTEM_PROMPT, messages: [{ role: 'user', content: smsText }] })
     })
     const data   = await res.json()
     const raw    = data.content?.[0]?.text?.trim() ?? '{}'
     const parsed = JSON.parse(raw.replace(/^```json\s*/, '').replace(/\s*```$/, ''))
     if (!parsed.vehicle_number) parsed.vehicle_number = extractVehicleNumber(smsText)
     if (!parsed.lease_number)   parsed.lease_number   = extractLeaseNumber(smsText)
+    if (!parsed.translated_text) parsed.translated_text = ''
+    if (!parsed.source_language) parsed.source_language = ''
     return parsed
   } catch { return { ...fallback, reason: 'Parse failed' } }
 }
@@ -160,7 +167,9 @@ export async function POST(req: NextRequest) {
             lease_number:   extractLeaseNumber(msg.sms_text),
             target:         ruleMatch.action.includes('pim') ? 'pim' : 'driver',
             confidence:     'high',
-            reason:         `Rule: ${ruleMatch.name}`
+            reason:         `Rule: ${ruleMatch.name}`,
+            translated_text: '',
+            source_language: '',
           }
         : await parseWithClaude(msg.sms_text)
 
@@ -198,6 +207,8 @@ export async function POST(req: NextRequest) {
         result,
         success,
         processed:      true,
+        translated_text: intent.translated_text || null,
+        source_language: intent.source_language || null,
       }, { onConflict: 'gmail_id' })
 
       // Backfill all messages from same sender if vehicle identified

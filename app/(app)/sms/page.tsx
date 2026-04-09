@@ -9,6 +9,7 @@ interface SmsMessage {
   target: string | null; confidence: string | null; reason: string | null
   rule_name: string | null; device_name: string | null; result: string | null
   success: boolean | null; created_at: string
+  translated_text: string | null; source_language: string | null
 }
 
 interface SmsRule {
@@ -373,6 +374,19 @@ export default function SmsPage() {
     }))
   })()
 
+  function msgTextCell(m: SmsMessage) {
+    const displayText = m.translated_text || m.sms_text
+    const titleText = m.translated_text ? `${m.translated_text}\n\n[${m.source_language}] ${m.sms_text}` : m.sms_text
+    return (
+      <td style={{ fontSize: 12, maxWidth: 320 }}>
+        <div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={titleText}>
+          {m.source_language && <span style={{ fontSize: 9, background: 'var(--blue-bg)', color: 'var(--blue)', padding: '1px 5px', borderRadius: 3, marginRight: 4, fontWeight: 600 }}>🌐 {m.source_language}</span>}
+          {displayText}
+        </div>
+      </td>
+    )
+  }
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -432,15 +446,42 @@ export default function SmsPage() {
                 <div key={m.id} style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid var(--border)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                     <span style={{ fontSize: 11, color: 'var(--text3)' }}>{new Date(m.received_at).toLocaleString()}</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      {m.source_language && <span className="badge badge-blue" style={{ fontSize: 9 }} title={`Translated from ${m.source_language}`}>🌐 {m.source_language}</span>}
                       {m.vehicle_number && <span className="tag" style={{ fontSize: 10 }}>#{m.vehicle_number}</span>}
                       {m.action && m.action !== 'unknown' && <span className="badge badge-blue">{ACTION_LABELS[m.action] ?? m.action}</span>}
+                      {m.confidence && <span className={`badge ${confidenceColor(m.confidence)}`} style={{ fontSize: 9 }}>{m.confidence}</span>}
                       {m.success === true && <span className="badge badge-green">✓</span>}
                       {m.success === false && <span className="badge badge-red">✗</span>}
                     </div>
                   </div>
-                  <div style={{ fontSize: 13, color: 'var(--text)', background: 'var(--bg3)', padding: '10px 12px', borderRadius: 'var(--radius)', lineHeight: 1.5 }}>{m.sms_text}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', background: 'var(--bg3)', padding: '10px 12px', borderRadius: 'var(--radius)', lineHeight: 1.5 }}>
+                    {m.translated_text ? (
+                      <>
+                        <div>{m.translated_text}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic', borderTop: '1px solid var(--border)', paddingTop: 6 }}>
+                          Original ({m.source_language}): {m.sms_text}
+                        </div>
+                      </>
+                    ) : m.sms_text}
+                  </div>
                   {m.result && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{m.result}</div>}
+                  {/* Execute button in thread */}
+                  {m.action && m.action !== 'unknown' && m.action !== 'auto_reply' && m.vehicle_number && m.success === null && (
+                    <div style={{ marginTop: 6 }}>
+                      {committingId === m.id ? (
+                        <span className="spinner" style={{ width: 14, height: 14 }} />
+                      ) : (
+                        <button className="btn-primary btn-sm" style={{ fontSize: 11, padding: '2px 10px' }}
+                          onClick={() => commitAction(m)}>
+                          Execute {ACTION_LABELS[m.action] ?? m.action}
+                        </button>
+                      )}
+                      {commitResult?.id === m.id && (
+                        <span style={{ fontSize: 11, marginLeft: 8, color: commitResult.ok ? 'var(--green)' : 'var(--red)' }}>{commitResult.text}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -660,7 +701,7 @@ export default function SmsPage() {
                               <span style={{ paddingLeft: 16, color: 'var(--text3)', fontSize: 11 }}>↳</span>
                             )}
                           </td>
-                          <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
+                          {msgTextCell(m)}
                           <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
                           <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
                           <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>
@@ -706,7 +747,7 @@ export default function SmsPage() {
                         </td>
                         <td className="mono text-dim" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(m.received_at).toLocaleString()}</td>
                         <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.sender}</td>
-                        <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
+                        {msgTextCell(m)}
                         <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
                         <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
                         <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>

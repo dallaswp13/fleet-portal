@@ -186,11 +186,23 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 export async function rebootDevice(deviceId: string): Promise<{ success: boolean; raw: unknown }> {
   const { BASE_URL, BILLING_ID } = cfg()
   const token = await getAuthToken()
-  const { ok, parsed } = await m360Fetch(
+
+  // Try the dedicated reboot endpoint first (with an empty XML body)
+  const emptyBody = '<?xml version="1.0" encoding="UTF-8"?><rebootRequest />'
+  const { ok, parsed, rawText } = await m360Fetch(
     `${BASE_URL}/device-apis/devices/2.0/reboot/customer/${BILLING_ID}/device/${deviceId}`,
-    token, 'POST'
+    token, 'POST', emptyBody
   )
-  return { success: ok, raw: parsed }
+
+  if (ok) return { success: true, raw: parsed }
+
+  // Fallback: use the generic sendAction endpoint with RestartDevice
+  console.warn(`[maas360] Dedicated reboot endpoint failed (HTTP non-OK). Response: ${rawText.slice(0, 300)}. Trying sendAction fallback.`)
+  const fallback = await sendDeviceAction(deviceId, 'RestartDevice')
+  if (fallback.success) return fallback
+
+  // Return the original error with details for debugging
+  return { success: false, raw: { dedicatedEndpoint: parsed, sendActionFallback: fallback.raw, hint: 'Both reboot methods failed. Check device ID and M360 portal.' } }
 }
 
 const ACTION_MAP: Record<string, string> = {

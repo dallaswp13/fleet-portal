@@ -50,6 +50,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { key: 'roadmap', label: '🗺️ Roadmap'    },
     ...(canManageUsers ? [
       { key: 'db',      label: '⬆️ Update Database' },
+      { key: 'export',  label: '📤 Export Data' },
       { key: 'users',   label: '👥 Manage Users'     },
       { key: 'invoice', label: '🧾 Generate Invoice'  },
     ] : []),
@@ -139,6 +140,49 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       )}
 
       {tab === 'invoice' && canManageUsers && <InvoiceGenerator />}
+
+      {/* ── EXPORT DATA ── */}
+      {tab === 'export' && canManageUsers && (
+        <div className="card" style={{ maxWidth: 600 }}>
+          <div style={{ padding: '20px' }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Export Fleet Data</h2>
+            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 20 }}>
+              Download a complete fleet snapshot as an Excel spreadsheet.
+            </p>
+
+            <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '16px', marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>Included Fields</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', fontSize: 12, color: 'var(--text2)' }}>
+                <div>• Vehicle #</div>
+                <div>• Fleet</div>
+                <div>• Current Driver</div>
+                <div>• Driver Lease #</div>
+                <div>• Driver Tablet Device Name</div>
+                <div>• Driver Tablet M360 ID</div>
+                <div>• Driver Tablet Phone</div>
+                <div>• PIM Tablet Device Name</div>
+                <div>• PIM Tablet M360 ID</div>
+                <div>• PIM Tablet Phone</div>
+              </div>
+            </div>
+
+            <a href="/api/export" download className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Download Fleet Export (.xlsx)
+            </a>
+
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12 }}>
+              Data is pulled from the fleet_overview view — make sure your database is up to date before exporting.
+            </div>
+          </div>
+        </div>
+      )}
+      {tab === 'export' && !canManageUsers && (
+        <div className="alert alert-error">You do not have permission to export data.</div>
+      )}
+
       {tab === 'roadmap' && (
         <div>
           <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Launch Roadmap</h2>
