@@ -4,12 +4,6 @@
   "devCommand": "next dev",
   "installCommand": "npm install",
   "regions": ["iad1"],
-  "crons": [
-    {
-      "path": "/api/maas360/keepalive",
-      "schedule": "*/30 * * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/(.*).png",
