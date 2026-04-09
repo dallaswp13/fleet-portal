@@ -32,6 +32,25 @@ const ACTION_OPTIONS = [
 const ACTION_LABELS: Record<string, string> = Object.fromEntries(ACTION_OPTIONS.map(o => [o.value, o.label]))
 ACTION_LABELS['unknown'] = '—'
 
+/* Map SMS action → M360 action + target device */
+function resolveM360Action(smsAction: string): { m360Action: string; isPim: boolean } {
+  switch (smsAction) {
+    case 'reboot_driver':   return { m360Action: 'reboot', isPim: false }
+    case 'reboot_pim':      return { m360Action: 'reboot', isPim: true }
+    case 'support_driver':  return { m360Action: 'support_driver', isPim: false }
+    case 'support_pim':     return { m360Action: 'support_pim', isPim: true }
+    case 'clear_pim_bt':    return { m360Action: 'clear_pim_bt', isPim: true }
+    case 'kiosk_enter':     return { m360Action: 'kiosk_enter', isPim: false }
+    case 'kiosk_exit':      return { m360Action: 'kiosk_exit', isPim: false }
+    case 'clear_dispatch':  return { m360Action: 'clear_dispatch', isPim: false }
+    case 'clear_app_data':  return { m360Action: 'clear_app_data', isPim: false }
+    case 'wipe':            return { m360Action: 'wipe', isPim: false }
+    default:                return { m360Action: smsAction, isPim: false }
+  }
+}
+
+const DESTRUCTIVE_ACTIONS = new Set(['wipe', 'kiosk_enter', 'kiosk_exit'])
+
 
 function VehicleSearch({ vehicles, value, onChange }: {
   vehicles: { id: string; vehicle_number: number; fleet_id: string }[]
@@ -114,6 +133,15 @@ export default function SmsPage() {
   const [assignVeh,   setAssignVeh]   = useState('')
   const [assigning,   setAssigning]   = useState(false)
 
+  // Commit action state
+  const [committingId, setCommittingId] = useState<string | null>(null)
+  const [confirmMsg,   setConfirmMsg]   = useState<SmsMessage | null>(null)
+  const [commitResult, setCommitResult] = useState<{ id: string; ok: boolean; text: string } | null>(null)
+
+  // Thread grouping
+  const [groupBySender, setGroupBySender] = useState(true)
+  const [expandedSenders, setExpandedSenders] = useState<Set<string>>(new Set())
+
   useEffect(() => {
     loadMessages(); loadRules()
     const supabase = createClient()
@@ -182,6 +210,60 @@ export default function SmsPage() {
     setAssigning(false)
     setThreadMsg(prev => prev ? { ...prev, vehicle_id: assignVeh || null } : null)
     loadMessages()
+  }
+
+  async function commitAction(msg: SmsMessage, confirmed = false) {
+    if (!msg.action || msg.action === 'unknown' || msg.action === 'auto_reply') return
+    if (!msg.vehicle_number) { setCommitResult({ id: msg.id, ok: false, text: 'No vehicle assigned' }); return }
+
+    const { m360Action, isPim } = resolveM360Action(msg.action)
+
+    // Require confirmation for destructive actions or low confidence
+    const needsConfirm = DESTRUCTIVE_ACTIONS.has(m360Action) || msg.confidence === 'low'
+    if (needsConfirm && !confirmed) { setConfirmMsg(msg); return }
+
+    setCommittingId(msg.id); setCommitResult(null)
+    const supabase = createClient()
+
+    try {
+      // Look up vehicle in fleet_overview to get device IDs
+      const { data: veh } = await supabase
+        .from('fleet_overview')
+        .select('vehicle_id,vehicle_number,fleet_id,m360_device_id,pim_m360_device_id')
+        .eq('vehicle_number', parseInt(msg.vehicle_number))
+        .limit(1).single()
+
+      if (!veh) { throw new Error(`Vehicle #${msg.vehicle_number} not found in fleet`) }
+
+      const deviceId = isPim ? veh.pim_m360_device_id : veh.m360_device_id
+      if (!deviceId) { throw new Error(`No ${isPim ? 'PIM' : 'driver'} device linked to vehicle #${msg.vehicle_number}`) }
+
+      // Execute the M360 action
+      const res = await fetch('/api/maas360/action', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: m360Action, deviceId, vehicleNumber: veh.vehicle_number,
+          confirmed: DESTRUCTIVE_ACTIONS.has(m360Action),
+        }),
+      })
+      const data = await res.json()
+
+      // Update the sms_message record with result
+      await supabase.from('sms_messages').update({
+        success: data.success ?? false,
+        result: data.message ?? data.error ?? 'Unknown',
+      }).eq('id', msg.id)
+
+      setCommitResult({ id: msg.id, ok: data.success, text: data.message ?? data.error })
+      loadMessages()
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Unknown error'
+      await supabase.from('sms_messages').update({ success: false, result: errMsg }).eq('id', msg.id)
+      setCommitResult({ id: msg.id, ok: false, text: errMsg })
+      loadMessages()
+    } finally {
+      setCommittingId(null)
+    }
   }
 
   async function saveRule() {
@@ -273,6 +355,24 @@ export default function SmsPage() {
     if (c === 'high') return 'badge-green'; if (c === 'medium') return 'badge-amber'; return 'badge-red'
   }
 
+  function toggleSenderExpand(sender: string) {
+    setExpandedSenders(prev => { const n = new Set(prev); n.has(sender) ? n.delete(sender) : n.add(sender); return n })
+  }
+
+  // Group messages by sender for thread view
+  type SenderGroup = { sender: string; latest: SmsMessage; messages: SmsMessage[]; count: number }
+  const senderGroups: SenderGroup[] = (() => {
+    const map = new Map<string, SmsMessage[]>()
+    for (const m of messages) {
+      const key = m.sender
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(m)
+    }
+    return Array.from(map.entries()).map(([sender, msgs]) => ({
+      sender, latest: msgs[0], messages: msgs, count: msgs.length,
+    }))
+  })()
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -343,6 +443,37 @@ export default function SmsPage() {
                   {m.result && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{m.result}</div>}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Action Modal ── */}
+      {confirmMsg && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setConfirmMsg(null)}>
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: 420, boxShadow: 'var(--shadow-lg)', padding: '24px' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
+              {DESTRUCTIVE_ACTIONS.has(resolveM360Action(confirmMsg.action!).m360Action) ? '⚠️ Destructive Action' : '⚠️ Low Confidence — Confirm Action'}
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16, lineHeight: 1.6 }}>
+              Execute <strong>{ACTION_LABELS[confirmMsg.action!] ?? confirmMsg.action}</strong> on vehicle <strong>#{confirmMsg.vehicle_number}</strong>?
+              {confirmMsg.confidence === 'low' && (
+                <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--amber-bg)', borderRadius: 'var(--radius)', fontSize: 12, color: 'var(--amber)' }}>
+                  Confidence is <strong>low</strong> — the parsed action may not match the sender's intent. Please review the message before committing.
+                </div>
+              )}
+              {confirmMsg.sms_text && (
+                <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 12, fontStyle: 'italic' }}>
+                  "{confirmMsg.sms_text}"
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-secondary btn-sm" onClick={() => setConfirmMsg(null)}>Cancel</button>
+              <button className={DESTRUCTIVE_ACTIONS.has(resolveM360Action(confirmMsg.action!).m360Action) ? 'btn-danger btn-sm' : 'btn-primary btn-sm'}
+                onClick={() => { const m = confirmMsg; setConfirmMsg(null); commitAction(m, true) }}>
+                {DESTRUCTIVE_ACTIONS.has(resolveM360Action(confirmMsg.action!).m360Action) ? 'Yes, Execute' : 'Confirm & Execute'}
+              </button>
             </div>
           </div>
         </div>
@@ -469,7 +600,15 @@ export default function SmsPage() {
               </button>
             )}
           </div>
-          <span style={{ fontSize: 12, color: 'var(--text3)' }}>{messages.length} messages · click row to view · click ☐ to select for rule testing</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button className={`btn-secondary btn-sm`} onClick={() => { setGroupBySender(g => !g); setExpandedSenders(new Set()) }}
+              style={{ fontSize: 11 }}>
+              {groupBySender ? '📋 Flat View' : '💬 Group by Sender'}
+            </button>
+            <span style={{ fontSize: 12, color: 'var(--text3)' }}>
+              {groupBySender ? `${senderGroups.length} senders · ${messages.length} messages` : `${messages.length} messages`} · click row to view · ☐ to select
+            </span>
+          </div>
         </div>
         <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 280px)' }}>
           {loadingMsgs ? (
@@ -490,35 +629,115 @@ export default function SmsPage() {
                     </div>
                   </th>
                   <th>Time</th><th>From</th><th>Message</th><th>Vehicle</th>
-                  <th>Action</th><th>Rule</th><th>Confidence</th><th>Result</th>
+                  <th>Action</th><th>Rule</th><th>Confidence</th><th>Result</th><th style={{ width: 80 }}>Commit</th>
                 </tr>
               </thead>
               <tbody>
-                {messages.map(m => {
-                  const isSelected = selectedMsgs.has(m.id)
-                  return (
-                    <tr key={m.id} onClick={() => openThread(m)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined }}>
-                      <td onClick={e => { e.stopPropagation(); toggleMsgSelect(m.id) }} style={{ cursor: 'pointer', width: 32 }}>
-                        <div style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--blue)' : 'var(--border2)'}`,
-                          background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
-                          {isSelected && <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2"><polyline points="2 6 5 9 10 3"/></svg>}
-                        </div>
-                      </td>
-                      <td className="mono text-dim" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(m.received_at).toLocaleString()}</td>
-                      <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.sender}</td>
-                      <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
-                      <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
-                      <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
-                      <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>
-                      <td>{m.confidence ? <span className={`badge ${confidenceColor(m.confidence)}`}>{m.confidence}</span> : <span className="text-dim">—</span>}</td>
-                      <td>
-                        {m.success === null ? <span className="badge badge-gray">Skipped</span>
-                          : m.success ? <span className="badge badge-green">✓ Done</span>
-                          : <span className="badge badge-red" title={m.result ?? ''}>✗ Failed</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {groupBySender ? (
+                  /* ── Grouped by sender ── */
+                  senderGroups.map(g => {
+                    const isExpanded = expandedSenders.has(g.sender)
+                    const displayMsgs = isExpanded ? g.messages : [g.latest]
+                    return displayMsgs.map((m, idx) => {
+                      const isSelected = selectedMsgs.has(m.id)
+                      const isGroupHeader = idx === 0
+                      return (
+                        <tr key={m.id} onClick={() => openThread(m)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined, borderTop: isGroupHeader && !isExpanded ? undefined : idx > 0 ? 'none' : undefined }}>
+                          <td onClick={e => { e.stopPropagation(); toggleMsgSelect(m.id) }} style={{ cursor: 'pointer', width: 32 }}>
+                            <div style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--blue)' : 'var(--border2)'}`,
+                              background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                              {isSelected && <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2"><polyline points="2 6 5 9 10 3"/></svg>}
+                            </div>
+                          </td>
+                          <td className="mono text-dim" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(m.received_at).toLocaleString()}</td>
+                          <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {isGroupHeader ? (
+                              <span onClick={e => { e.stopPropagation(); toggleSenderExpand(g.sender) }} style={{ cursor: 'pointer' }}>
+                                {g.count > 1 && <span style={{ fontSize: 10, marginRight: 4, color: 'var(--accent)' }}>{isExpanded ? '▼' : '▶'} {g.count}</span>}
+                                {g.sender}
+                              </span>
+                            ) : (
+                              <span style={{ paddingLeft: 16, color: 'var(--text3)', fontSize: 11 }}>↳</span>
+                            )}
+                          </td>
+                          <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
+                          <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
+                          <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
+                          <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>
+                          <td>{m.confidence ? <span className={`badge ${confidenceColor(m.confidence)}`}>{m.confidence}</span> : <span className="text-dim">—</span>}</td>
+                          <td>
+                            {m.success === null ? <span className="badge badge-gray">Skipped</span>
+                              : m.success ? <span className="badge badge-green">✓ Done</span>
+                              : <span className="badge badge-red" title={m.result ?? ''}>✗ Failed</span>}
+                          </td>
+                          <td onClick={e => e.stopPropagation()}>
+                            {m.action && m.action !== 'unknown' && m.action !== 'auto_reply' && m.vehicle_number && m.success === null ? (
+                              committingId === m.id ? (
+                                <span className="spinner" style={{ width: 14, height: 14 }} />
+                              ) : (
+                                <button className="btn-primary btn-sm" style={{ fontSize: 11, padding: '2px 10px' }}
+                                  onClick={() => commitAction(m)}>Execute</button>
+                              )
+                            ) : m.success !== null ? (
+                              <span style={{ fontSize: 10, color: 'var(--text3)' }}>Sent</span>
+                            ) : (
+                              <span style={{ fontSize: 10, color: 'var(--text3)' }}>—</span>
+                            )}
+                            {commitResult?.id === m.id && (
+                              <div style={{ fontSize: 10, color: commitResult.ok ? 'var(--green)' : 'var(--red)', marginTop: 2, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                title={commitResult.text}>{commitResult.text}</div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  })
+                ) : (
+                  /* ── Flat view ── */
+                  messages.map(m => {
+                    const isSelected = selectedMsgs.has(m.id)
+                    return (
+                      <tr key={m.id} onClick={() => openThread(m)} style={{ cursor: 'pointer', background: isSelected ? 'var(--blue-bg)' : undefined }}>
+                        <td onClick={e => { e.stopPropagation(); toggleMsgSelect(m.id) }} style={{ cursor: 'pointer', width: 32 }}>
+                          <div style={{ width: 14, height: 14, borderRadius: 3, border: `1px solid ${isSelected ? 'var(--blue)' : 'var(--border2)'}`,
+                            background: isSelected ? 'var(--blue)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                            {isSelected && <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2"><polyline points="2 6 5 9 10 3"/></svg>}
+                          </div>
+                        </td>
+                        <td className="mono text-dim" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(m.received_at).toLocaleString()}</td>
+                        <td style={{ fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.sender}</td>
+                        <td style={{ fontSize: 12, maxWidth: 320 }}><div style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.4, maxHeight: '2.8em' }} title={m.sms_text}>{m.sms_text}</div></td>
+                        <td>{m.vehicle_number ? <span className="tag">#{m.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
+                        <td><span className="badge badge-gray">{ACTION_LABELS[m.action ?? 'unknown'] ?? m.action ?? '—'}</span></td>
+                        <td style={{ fontSize: 11, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{m.rule_name ?? <span style={{ opacity: 0.4 }}>Claude</span>}</td>
+                        <td>{m.confidence ? <span className={`badge ${confidenceColor(m.confidence)}`}>{m.confidence}</span> : <span className="text-dim">—</span>}</td>
+                        <td>
+                          {m.success === null ? <span className="badge badge-gray">Skipped</span>
+                            : m.success ? <span className="badge badge-green">✓ Done</span>
+                            : <span className="badge badge-red" title={m.result ?? ''}>✗ Failed</span>}
+                        </td>
+                        <td onClick={e => e.stopPropagation()}>
+                          {m.action && m.action !== 'unknown' && m.action !== 'auto_reply' && m.vehicle_number && m.success === null ? (
+                            committingId === m.id ? (
+                              <span className="spinner" style={{ width: 14, height: 14 }} />
+                            ) : (
+                              <button className="btn-primary btn-sm" style={{ fontSize: 11, padding: '2px 10px' }}
+                                onClick={() => commitAction(m)}>Execute</button>
+                            )
+                          ) : m.success !== null ? (
+                            <span style={{ fontSize: 10, color: 'var(--text3)' }}>Sent</span>
+                          ) : (
+                            <span style={{ fontSize: 10, color: 'var(--text3)' }}>—</span>
+                          )}
+                          {commitResult?.id === m.id && (
+                            <div style={{ fontSize: 10, color: commitResult.ok ? 'var(--green)' : 'var(--red)', marginTop: 2, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                              title={commitResult.text}>{commitResult.text}</div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
               </tbody>
             </table>
           )}

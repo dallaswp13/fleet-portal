@@ -144,10 +144,33 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
       if (norms.length > 0) query = query.not('phone_norm', 'in', `(${norms.join(',')})`)
     }
 
-    // Available tab
+    // Available tab — use RPC if available, else fall back to NOT IN filter
     if (activeTab === 'available') {
-      const norms = Array.from(assignedNorms)
-      if (norms.length > 0) query = query.not('phone_norm', 'in', `(${norms.join(',')})`)
+      // Try RPC approach first (avoids URL length limits with many norms)
+      let rpcNorms: string[] | null = null
+      try {
+        const { data: rpcData } = await supabase.rpc('get_available_line_norms', {
+          p_offices: officeList.length > 0 && officeList.length < 4 ? officeList : null,
+          p_limit: perPage,
+          p_offset: page * perPage,
+        })
+        if (rpcData && Array.isArray(rpcData)) {
+          rpcNorms = rpcData.map((r: { norm: string }) => r.norm).filter(Boolean)
+        }
+      } catch { /* RPC not available yet — migration 025 not run */ }
+
+      if (rpcNorms !== null) {
+        // RPC worked: filter to just this page of available norms
+        if (rpcNorms.length > 0) {
+          query = query.in('phone_norm', rpcNorms)
+        } else {
+          query = query.eq('phone_norm', '___NO_AVAILABLE_LINES___')
+        }
+      } else {
+        // Fallback: old NOT IN approach
+        const norms = Array.from(assignedNorms)
+        if (norms.length > 0) query = query.not('phone_norm', 'in', `(${norms.join(',')})`)
+      }
     }
 
     if (fStatus) query = query.ilike('phone_status', `%${fStatus}%`)
@@ -161,6 +184,18 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
         query = query.or(`phone_number.ilike.${like},verizon_user.ilike.${like},mobile_plan.ilike.${like}`)
       }
     }
+  }
+
+  // Get available line count for the tab badge (uses RPC if available)
+  let availableCount = 0
+  try {
+    const { data: countData } = await supabase.rpc('count_available_lines', {
+      p_offices: officeList.length > 0 && officeList.length < 4 ? officeList : null,
+    })
+    if (typeof countData === 'number') availableCount = countData
+  } catch {
+    // RPC not available — estimate from JS (may be inaccurate for large datasets)
+    // Can't easily compute without fetching all lines, so leave as 0
   }
 
   const { data: rawLines, count: dbCount } = await query
@@ -192,6 +227,8 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
           totalCount={dbCount ?? 0}
           search={search} sort={sort} dir={dir} activeTab={activeTab}
           fRole={fRole} fStatus={fStatus} fVehicle={fVehicle}
+          availableCount={availableCount}
+          assignedCount={assignedNorms.size}
         />
       </Suspense>
     </div>

@@ -260,19 +260,48 @@ function RemoteSupportModal({ action, onClose }: { action: QuickAction; onClose:
   const [busy,    setBusy]    = useState(false)
   const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
 
+  const [steps, setSteps] = useState<{ label: string; status: 'pending' | 'running' | 'done' | 'error'; msg?: string }[]>([])
+
   async function confirm() {
     if (!vehicle) return
     setBusy(true)
-    if (!vehicle.m360_device_id) {
-      setResult({ ok: false, msg: 'No M360 device ID for this vehicle. Import devices from MaaS360 first.' })
-      setBusy(false); return
+
+    const stepDefs = [
+      { label: 'Reboot driver tablet', run: () => vehicle.m360_device_id ? m360Action('reboot', vehicle.m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No driver device ID' }) },
+      { label: 'Clear dispatch app cache', run: () => vehicle.m360_device_id ? m360Action('clear_dispatch', vehicle.m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No driver device ID' }) },
+      { label: 'Clear PIM Bluetooth', run: () => vehicle.pim_m360_device_id ? m360Action('clear_pim_bt', vehicle.pim_m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No PIM device ID — skipped' }) },
+    ]
+
+    const newSteps: { label: string; status: 'pending' | 'running' | 'done' | 'error'; msg?: string }[] = stepDefs.map(s => ({ label: s.label, status: 'pending' as const }))
+    setSteps([...newSteps])
+
+    let allOk = true
+    const msgs: string[] = []
+
+    for (let i = 0; i < stepDefs.length; i++) {
+      newSteps[i] = { ...newSteps[i], status: 'running' }
+      setSteps([...newSteps])
+
+      const r = await stepDefs[i].run()
+      newSteps[i] = { label: newSteps[i].label, status: r.ok ? 'done' : 'error', msg: r.msg }
+      setSteps([...newSteps])
+      msgs.push(`${r.ok ? '✓' : '✗'} ${newSteps[i].label}: ${r.msg}`)
+      if (!r.ok && newSteps[i].label !== 'Clear PIM Bluetooth') allOk = false
     }
-    const r = await m360Action('support_driver', vehicle.m360_device_id, vehicle.vehicle_number)
+
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'support_driver', target_type: 'device', target_id: vehicle.m360_device_id, vehicle_number: vehicle.vehicle_number, success: r.ok }) } catch { /* non-fatal */ }
+
+    // Log note on vehicle
+    const { data: veh } = await sb.from('vehicles').select('notes').eq('id', vehicle.id).single()
+    let log: { text: string; ts: string }[] = []
+    try { log = JSON.parse(veh?.notes ?? '[]') } catch { log = [] }
+    log.unshift({ text: `[Remote Support] ${msgs.join(' | ')} · by: ${user?.email}`, ts: new Date().toISOString() })
+    await sb.from('vehicles').update({ notes: JSON.stringify(log), updated_at: new Date().toISOString() }).eq('id', vehicle.id)
+
+    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'remote_support', target_type: 'device', target_id: vehicle.m360_device_id ?? vehicle.id, vehicle_number: vehicle.vehicle_number, payload: { steps: msgs }, success: allOk }) } catch { /* non-fatal */ }
     setBusy(false)
-    setResult(r)
+    setResult({ ok: allOk, msg: msgs.join('\n') })
   }
 
   return (
@@ -280,15 +309,38 @@ function RemoteSupportModal({ action, onClose }: { action: QuickAction; onClose:
       {!vehicle ? (
         <VehicleLookup onFound={setVehicle} color={action.color} />
       ) : result ? (
-        <ResultBanner ok={result.ok} msg={result.msg} />
+        <div>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 13 }}>
+              <span>{s.status === 'done' ? '✅' : s.status === 'error' ? '❌' : '⬜'}</span>
+              <span style={{ fontWeight: 500 }}>{s.label}</span>
+              {s.msg && <span style={{ fontSize: 11, color: 'var(--text3)' }}>— {s.msg}</span>}
+            </div>
+          ))}
+          <div style={{ marginTop: 12 }}>
+            <ResultBanner ok={result.ok} msg={result.ok ? 'Support sequence complete' : 'Some steps failed — see details above'} />
+          </div>
+        </div>
+      ) : steps.length > 0 ? (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Running support sequence…</div>
+          {steps.map((s, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 13 }}>
+              <span>{s.status === 'done' ? '✅' : s.status === 'error' ? '❌' : s.status === 'running' ? '⏳' : '⬜'}</span>
+              <span style={{ fontWeight: 500, opacity: s.status === 'pending' ? 0.5 : 1 }}>{s.label}</span>
+              {s.msg && <span style={{ fontSize: 11, color: 'var(--text3)' }}>— {s.msg}</span>}
+            </div>
+          ))}
+        </div>
       ) : (
         <div>
           <ConfirmBox rows={[
             ['Vehicle', `#${vehicle.vehicle_number} ${vehicle.fleet_id.toUpperCase()}`],
             ['Driver device', vehicle.device_name ?? '(no device ID)'],
-            ['Action', 'Initiate remote support session via M360'],
+            ['PIM device', vehicle.pim_device_name ?? '(no device ID)'],
+            ['Actions', '1) Reboot driver tablet\n2) Clear dispatch app cache\n3) Clear PIM Bluetooth'],
           ]} />
-          <ActionButtons busy={busy} onBack={() => setVehicle(null)} onConfirm={confirm} color={action.color} label="Start Support Session" />
+          <ActionButtons busy={busy} onBack={() => setVehicle(null)} onConfirm={confirm} color={action.color} label="Run Support Sequence" />
         </div>
       )}
     </ModalShell>

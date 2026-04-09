@@ -149,12 +149,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {([
               {
-                status: 'blocked', label: 'MaaS360 API Integration',
-                detail: 'Reboot, kiosk, wipe, and support actions in Vehicle Panel require valid MaaS360 app credentials. Access key may be expired — check Account → My Account → Application Management in the MaaS360 portal and regenerate if needed.',
+                status: 'done', label: 'MaaS360 API Integration',
+                detail: 'Connected via XML transport. Reboot, kiosk, wipe, clear app data, and support actions all operational. Token cached in Supabase with auto-refresh.',
               },
               {
-                status: 'blocked', label: 'SMS Inbox — Rule Execution',
-                detail: 'Poll Now parses intent and identifies vehicles correctly. Actual device actions (reboot, clear, kiosk) are not sent until MaaS360 API is working.',
+                status: 'done', label: 'SMS Inbox — Commit & Execute',
+                detail: 'Messages are parsed for intent and vehicle. Execute button sends M360 commands directly. Destructive actions and low-confidence messages require confirmation. Messages grouped by sender.',
               },
               {
                 status: 'blocked', label: 'Gmail OAuth',
@@ -165,8 +165,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS. Re-import CCSI-drivers.xlsx to refresh URLs.',
               },
               {
-                status: 'todo', label: 'Quick Actions — Full Workflows',
-                detail: 'Replace Driver Tablet, Surrender Vehicle, and Remote Support currently log notes only. Full MDM workflow (device reassignment, policy push) requires MaaS360 API.',
+                status: 'done', label: 'Quick Actions — Full Workflows',
+                detail: 'Replace Tablet (wipe + log), Surrender Vehicle (wipe both + unseat + mark), and Remote Support (reboot + clear dispatch + clear BT) all wired to M360 API.',
               },
               {
                 status: 'done', label: 'Sitewide Filters (Office / Fleet)',
@@ -176,10 +176,13 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 status: 'done', label: 'Verizon Lines — Vehicle Association',
                 detail: 'Phone norm matching fixed. PIM and Driver phone filters now run in the database so counts and pagination are accurate.',
               },
-
+              {
+                status: 'todo', label: 'Available Lines — Enhanced Filtering',
+                detail: 'Run migration 025 in Supabase SQL editor to enable DB-side available line filtering. Without it, the Available tab may show incorrect results for large datasets.',
+              },
               {
                 status: 'done', label: 'Server-Side Pagination & Filtering',
-                detail: 'Vehicles, Devices, and Verizon all filter and paginate in the database. Count and page numbers are always accurate.',
+                detail: 'Vehicles, Devices, Verizon, and Drivers all filter and paginate in the database. Count and page numbers are always accurate.',
               },
             ] as { status: string; label: string; detail: string }[]).map((item, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', borderLeft: `3px solid ${item.status === 'done' ? 'var(--green)' : item.status === 'blocked' ? 'var(--red)' : 'var(--amber)'}` }}>

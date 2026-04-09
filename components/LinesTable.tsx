@@ -14,6 +14,7 @@ interface Props {
   totalPages: number; totalCount: number
   search: string; sort: string; dir: boolean; activeTab: 'all'|'available'|'staff'
   fRole: string; fStatus: string; fVehicle: string
+  availableCount?: number; assignedCount?: number
 }
 
 const ALL_COLS = [
@@ -36,7 +37,7 @@ const SEL = (active: boolean): React.CSSProperties => ({
   fontWeight: active ? 600 : 400,
 })
 
-export default function LinesTable({ lines, page, perPage, totalPages, totalCount, search, sort, dir, activeTab, fRole, fStatus, fVehicle }: Props) {
+export default function LinesTable({ lines, page, perPage, totalPages, totalCount, search, sort, dir, activeTab, fRole, fStatus, fVehicle, availableCount, assignedCount }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
@@ -117,7 +118,7 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
           <button key={t} className={activeTab === t ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
             onClick={() => nav({ tab: t, page: '0' })}
             style={{ marginLeft: t === 'staff' ? 8 : 0 }}>
-            {t === 'all' ? 'All Lines' : t === 'available' ? 'Available' : 'Staff'}
+            {t === 'all' ? 'All Lines' : t === 'available' ? `Available${availableCount ? ` (${availableCount})` : ''}` : 'Staff'}
           </button>
         ))}
       </div>
@@ -125,6 +126,14 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
       {activeTab === 'available' && (
         <div className="alert alert-warning" style={{ marginBottom: 12, fontSize: 12 }}>
           Lines not matched to any vehicle — hotspots, backup SIMs, or lines with no phone number in CCSI.
+          {totalCount === 0 && assignedCount !== undefined && (
+            <div style={{ marginTop: 6, opacity: 0.8 }}>
+              {assignedCount > 0
+                ? `All lines are currently matched to vehicles (${assignedCount} assigned phone numbers). If this seems wrong, re-import CCSI and Verizon data to refresh phone norm matching.`
+                : 'No vehicles have phone numbers assigned yet. Import CCSI data to populate vehicle phone numbers, then re-check.'}
+              {' '}Run migration 025 for improved Available tab filtering.
+            </div>
+          )}
         </div>
       )}
 
