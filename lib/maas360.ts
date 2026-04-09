@@ -120,19 +120,18 @@ async function getAuthToken(): Promise<string> {
   if (!USERNAME)   throw new Error('MAAS360_USERNAME not set')
   if (!PASSWORD)   throw new Error('MAAS360_PASSWORD not set')
 
+  // Body format: no outer <authRequest> wrapper — confirmed from MaaS360 API tester
   const xmlBody = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<authRequest>',
-    '  <maaS360AdminAuth>',
-    `    <billingID>${escapeXml(BILLING_ID)}</billingID>`,
-    `    <platformID>${escapeXml(PLATFORM_ID)}</platformID>`,
-    `    <appID>${escapeXml(APP_ID)}</appID>`,
-    `    <appVersion>${escapeXml(APP_VERSION)}</appVersion>`,
-    `    <appAccessKey>${escapeXml(ACCESS_KEY)}</appAccessKey>`,
-    `    <userName>${escapeXml(USERNAME)}</userName>`,
-    `    <password>${escapeXml(PASSWORD)}</password>`,
-    '  </maaS360AdminAuth>',
-    '</authRequest>',
+    '<maaS360AdminAuth>',
+    `  <billingID>${escapeXml(BILLING_ID)}</billingID>`,
+    `  <platformID>${escapeXml(PLATFORM_ID)}</platformID>`,
+    `  <appID>${escapeXml(APP_ID)}</appID>`,
+    `  <appVersion>${escapeXml(APP_VERSION)}</appVersion>`,
+    `  <appAccessKey>${escapeXml(ACCESS_KEY)}</appAccessKey>`,
+    `  <userName>${escapeXml(USERNAME)}</userName>`,
+    `  <password>${escapeXml(PASSWORD)}</password>`,
+    '</maaS360AdminAuth>',
   ].join('\n')
 
   const res = await fetch(`${BASE_URL}/auth-apis/auth/1.0/authenticate/${BILLING_ID}`, {
@@ -145,7 +144,8 @@ async function getAuthToken(): Promise<string> {
   let data: Record<string, unknown>
   try { data = parseXml(text) } catch { throw new Error(`MaaS360 auth: invalid XML ${res.status} — ${text.slice(0, 300)}`) }
 
-  const authResponse = data?.authResponse as Record<string, unknown> | undefined
+  // Response may come as <authResponse> at top level or nested
+  const authResponse = (data?.authResponse ?? data) as Record<string, unknown>
 
   if (!res.ok) {
     const code = authResponse?.errorCode
@@ -153,7 +153,7 @@ async function getAuthToken(): Promise<string> {
     throw new Error(`MaaS360 auth failed (HTTP ${res.status}): ${desc} [code ${code}]\nCredentials: billingID=${BILLING_ID}, appID=${APP_ID}, user=${USERNAME}`)
   }
 
-  const token = authResponse?.authToken as string | undefined
+  const token = (authResponse?.authToken as string | undefined)
   if (!token) throw new Error(`MaaS360 auth: no authToken in response — ${text.slice(0, 300)}`)
 
   const expires = Date.now() + 50 * 60 * 1000
@@ -252,7 +252,7 @@ export async function searchDeviceByName(deviceName: string): Promise<{ deviceId
 
 /* ── Auth test ────────────────────────────────────────────────────────── */
 
-export async function testAuth(): Promise<{ ok: boolean; message: string; credentials: Record<string, string> }> {
+export async function testAuth(): Promise<{ ok: boolean; message: string; credentials: Record<string, string>; debug?: string }> {
   const c = cfg()
   const credentials = {
     billingID:  c.BILLING_ID  || '(not set)',
@@ -273,6 +273,7 @@ export async function testAuth(): Promise<{ ok: boolean; message: string; creden
     const token = await getAuthToken()
     return { ok: true, message: `Auth OK. Token: ${token.slice(0, 8)}…`, credentials }
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err), credentials }
+    const msg = err instanceof Error ? err.message : String(err)
+    return { ok: false, message: msg, credentials, debug: msg }
   }
 }

@@ -161,10 +161,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 detail: 'GMAIL_CREDENTIALS env var must be set in Vercel with a base64-encoded Google OAuth client secret. Once connected, Poll Now will pull real driver SMS messages.',
               },
               {
-                status: 'done', label: 'Transactions — Vehicle Linking',
-                detail: 'Import links by device name and location. Re-upload transactions.csv to populate vehicle panel transaction history.',
-              },
-              {
                 status: 'done', label: 'Driver Photos',
                 detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS. Re-import CCSI-drivers.xlsx to refresh URLs.',
               },
@@ -183,7 +179,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
               {
                 status: 'done', label: 'Server-Side Pagination & Filtering',
-                detail: 'Vehicles, Devices, Verizon, and Transactions all filter and paginate in the database. Count and page numbers are always accurate.',
+                detail: 'Vehicles, Devices, and Verizon all filter and paginate in the database. Count and page numbers are always accurate.',
               },
             ] as { status: string; label: string; detail: string }[]).map((item, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', borderLeft: `3px solid ${item.status === 'done' ? 'var(--green)' : item.status === 'blocked' ? 'var(--red)' : 'var(--amber)'}` }}>

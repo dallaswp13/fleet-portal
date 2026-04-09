@@ -105,7 +105,6 @@ export default function UpdateDBContent() {
     if (lower.includes('device')) return { label: 'Devices', color: 'badge-amber' }
     if (lower.includes('unbilled') || lower.includes('usage') || lower.includes('account')) return { label: 'Verizon', color: 'badge-green' }
     if (lower.includes('driver'))      return { label: 'Drivers',      color: 'badge-gray' }
-    if (lower.includes('transaction'))  return { label: 'Transactions', color: 'badge-gray' }
     return { label: 'CSV', color: 'badge-gray' }
   }
 
@@ -121,7 +120,6 @@ export default function UpdateDBContent() {
           { icon: '📄', name: 'View_All_Devices.csv',              desc: 'MaaS360 device list',    color: 'var(--amber)' },
           { icon: '📄', name: 'account_unbilled_usage_report.csv', desc: 'Verizon usage data',     color: 'var(--green)' },
           { icon: '📊', name: 'CCSI-drivers.xlsx',                    desc: 'Driver roster + photos', color: '#9b59b6' },
-          { icon: '📄', name: 'transactions.csv',                        desc: 'Square transaction export', color: 'var(--green)' },
         ].map(f => (
           <div key={f.name} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
             <div style={{ fontSize: 20, marginBottom: 6 }}>{f.icon}</div>

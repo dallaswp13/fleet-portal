@@ -12,7 +12,6 @@ const mainNav = [
   { href: '/lines',     label: 'Verizon',         icon: '📡' },
   { href: '/drivers',   label: 'Drivers',         icon: '🧑‍✈️' },
   { href: '/sms',       label: 'Inbox',            icon: '💬' },
-  { href: '/transactions', label: 'Transactions',    icon: '💳' },
 ]
 
 const settingsNav = [
@@ -46,7 +45,7 @@ export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isA
         <div className="sidebar-section-label">Navigation</div>
         {mainNav
           .filter(item => {
-            if (item.href === '/sms' || item.href === '/transactions') return isAdmin
+            if (item.href === '/sms') return isAdmin
             return true
           })
           .map(item => (

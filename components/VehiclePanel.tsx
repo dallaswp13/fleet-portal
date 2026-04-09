@@ -5,7 +5,7 @@ import type { FleetOverview } from '@/types'
 import { fleetColor, officeColor } from '@/lib/filters'
 
 interface Props { vehicle: FleetOverview; onClose: () => void; onSaved?: (updated: FleetOverview) => void }
-type PanelTab = 'vehicle' | 'tablets' | 'driver' | 'notes' | 'messages' | 'transactions'
+type PanelTab = 'vehicle' | 'tablets' | 'driver' | 'notes' | 'messages'
 interface NoteEntry { text: string; ts: string }
 
 function shortOs(s: string | null | undefined) {
@@ -70,8 +70,6 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
   const [savingNote, setSavingNote] = useState(false)
   const [smsLog,     setSmsLog]     = useState<Record<string,unknown>[] | null>(null)
   const [loadingSms, setLoadingSms] = useState(false)
-  const [txns,       setTxns]       = useState<Record<string,unknown>[] | null>(null)
-  const [loadingTx,  setLoadingTx]  = useState(false)
   const [driver,     setDriver]     = useState<Record<string,unknown> | null | undefined>(undefined)
   const [driverQ,    setDriverQ]    = useState('')
   const [driverList, setDriverList] = useState<Record<string,unknown>[]>([])
@@ -106,15 +104,6 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
       .eq('id', v.vehicle_id)
     if (!error) { setNoteLog(updated); setNewNote(''); onSaved?.({ ...v, notes: JSON.stringify(updated) }) }
     setSavingNote(false)
-  }
-
-  async function loadTransactions() {
-    if (txns !== null) return
-    setLoadingTx(true)
-    const sb = createClient()
-    const { data } = await sb.from('transactions').select('*').eq('vehicle_id', v.vehicle_id)
-      .order('transaction_date', { ascending: false }).limit(100)
-    setTxns(data ?? []); setLoadingTx(false)
   }
 
   async function loadDriver() {
@@ -252,7 +241,6 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
     { key: 'driver',       label: 'Driver'       },
     { key: 'notes',        label: 'Notes'        },
     { key: 'messages',     label: 'Messages'     },
-    { key: 'transactions', label: 'Transactions' },
   ]
 
   const totalUsage = (v.monthly_usage_gb ?? 0) + (v.pim_monthly_usage_gb ?? 0)
@@ -286,7 +274,7 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0, background: 'var(--bg2)', overflowX: 'auto' }}>
           {TABS.map(t => (
             <button key={t.key}
-              onClick={() => { setTab(t.key); if (t.key === 'messages') loadSmsLog(); if (t.key === 'driver') loadDriver(); if (t.key === 'transactions') loadTransactions() }}
+              onClick={() => { setTab(t.key); if (t.key === 'messages') loadSmsLog(); if (t.key === 'driver') loadDriver() }}
               style={{ padding: '11px 18px', fontSize: 13, fontWeight: tab === t.key ? 600 : 400, color: tab === t.key ? 'var(--accent)' : 'var(--text3)', background: 'none', border: 'none', borderBottom: `2px solid ${tab === t.key ? 'var(--accent)' : 'transparent'}`, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
               {t.label}
             </button>
@@ -433,41 +421,6 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
                     </div>
                   ))
               }
-            </div>
-          )}
-
-          {/* TRANSACTIONS */}
-          {tab === 'transactions' && (
-            <div>
-              {loadingTx ? (
-                <div style={{ textAlign: 'center', padding: 32 }}><span className="spinner" /></div>
-              ) : !txns || txns.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>💳</div>
-                  <div style={{ fontSize: 14, color: 'var(--text2)', marginBottom: 16 }}>No transactions for this vehicle.</div>
-                  <a href="/settings?tab=db" style={{ textDecoration: 'none', fontSize: 13, color: 'var(--accent)' }}>Import transactions.csv →</a>
-                </div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 12, fontWeight: 500 }}>
-                    {txns.length} transactions · ${txns.filter(t => t.status !== 'REFUNDED').reduce((s, t) => s + (parseFloat(String(t.amount ?? '0').replace(/[^0-9.-]/g,'')) || 0), 0).toFixed(2)} revenue
-                  </div>
-                  {txns.map((t, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 12, padding: '9px 0', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
-                      <div style={{ width: 80, fontSize: 11, color: 'var(--text3)', flexShrink: 0 }}>
-                        {t.transaction_date ? new Date(String(t.transaction_date)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—'}
-                      </div>
-                      <div style={{ flex: 1, fontSize: 13 }}>{String(t.description ?? t.payment_type ?? '—')}</div>
-                      <div style={{ fontSize: 13, fontFamily: 'var(--font-mono)', fontWeight: 600, color: String(t.status) === 'REFUNDED' ? 'var(--red)' : undefined }}>
-                        {String(t.status) === 'REFUNDED' ? '-' : ''}${Math.abs(parseFloat(String(t.amount ?? '0').replace(/[^0-9.-]/g,'')) || 0).toFixed(2)}
-                      </div>
-                      <span className={`badge ${String(t.status) === 'COMPLETED' ? 'badge-green' : String(t.status) === 'REFUNDED' ? 'badge-red' : 'badge-gray'}`}>
-                        {String(t.status ?? '—')}
-                      </span>
-                    </div>
-                  ))}
-                </>
-              )}
             </div>
           )}
 

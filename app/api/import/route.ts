@@ -259,38 +259,9 @@ async function parseDrivers(buffer: ArrayBuffer): Promise<Record<string, unknown
 }
 
 
-// ── Parse Square transactions CSV ─────────────────────────────────────────────
-function parseTransactions(text: string): Record<string, unknown>[] {
-  const lines  = text.split('\n').filter(Boolean)
-  if (lines.length < 2) return []
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''))
-  const records: Record<string, unknown>[] = []
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) ?? []
-    const row: Record<string, unknown> = {}
-    headers.forEach((h, j) => { row[h] = (cols[j] ?? '').replace(/^"|"$/g, '').trim() })
-    if (!row['Transaction ID'] && !row['transaction_id']) continue
-    records.push({
-      transaction_id:   row['Transaction ID'] ?? row['transaction_id'],
-      transaction_date: row['Date'] ?? row['transaction_date'],
-      amount:           parseFloat(String(row['Amount'] ?? row['amount'] ?? '0').replace(/[^0-9.-]/g, '')) || 0,
-      payment_type:     row['Payment Method'] ?? row['payment_type'] ?? null,
-      device_name:      row['Device Name'] ?? row['device_name'] ?? null,
-      location:         row['Location'] ?? row['location'] ?? null,
-      description:      row['Description'] ?? row['description'] ?? null,
-      status:           row['Status'] ?? row['status'] ?? null,
-      vehicle_id:       null,   // always present — set during vehicle linking below
-      raw:              JSON.stringify(row).slice(0, 500),
-      updated_at:       new Date().toISOString(),
-    })
-  }
-  return records
-}
-
 // ── Detect file type ─────────────────────────────────────────────────────────
-function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'devices' | 'verizon' | 'transactions' | null {
+function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'devices' | 'verizon' | null {
   const lower = filename.toLowerCase()
-  if (lower.includes('transaction')) return 'transactions'
   if (lower.includes('driver') && lower.endsWith('.xlsx')) return 'drivers'
   if (lower.endsWith('.xlsx')) return 'ccsi'
   if (lower.includes('view_all_devices') || lower.includes('devices')) return 'devices'
@@ -340,46 +311,7 @@ export async function POST(req: NextRequest) {
         let message = ''
         let counts: Record<string, number> = {}
 
-        if (type === 'transactions') {
-          const txRecs = parseTransactions(text)
-
-          // Link transactions to vehicles by device_name → name_key
-          const { data: vehRows } = await supabaseService
-            .from('vehicles').select('id,vehicle_name_key')
-          const vehKeyMap = new Map<string, string>()
-          for (const v of vehRows ?? []) if (v.vehicle_name_key) vehKeyMap.set(v.vehicle_name_key, v.id)
-
-          // Also build vehicle_number → id map for Location-based matching
-          const vehNumMap = new Map<number, string>()
-          for (const v of vehRows ?? []) {
-            const match = v.vehicle_name_key?.match(/^(\d+)/)
-            if (match) vehNumMap.set(parseInt(match[1]), v.id)
-          }
-
-          for (const tx of txRecs) {
-            // Try device_name first: "6390E-SM-T387V" → name_key "6390e"
-            const dname = String(tx.device_name ?? '')
-            const nameKey = dname ? dname.replace(/^\*+/, '').split('-')[0].toLowerCase() : null
-            let vehicleId = nameKey ? (vehKeyMap.get(nameKey) ?? null) : null
-
-            // Fallback: parse vehicle number from Location "Cab #6020"
-            if (!vehicleId) {
-              const loc = String(tx.location ?? '')
-              const locMatch = loc.match(/(?:cab|vehicle|#)\s*#?\s*(\d{1,4})/i)
-              if (locMatch) vehicleId = vehNumMap.get(parseInt(locMatch[1])) ?? null
-            }
-
-            tx.vehicle_id = vehicleId  // always set (null if no match)
-          }
-
-          await upsertAll('transactions', 'transaction_id', txRecs, 200, (done, total) => {
-            const pct = 15 + Math.round((done / total) * 80)
-            send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
-          })
-          send({ type: 'done', total: txRecs.length, message: `Imported ${txRecs.length} transactions` })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_transactions', targetType: 'device', targetId: file.name, payload: { filename: file.name }, result: { total: txRecs.length }, success: true })
-          controller.close(); return
-        } else if (type === 'drivers') {
+        if (type === 'drivers') {
           const driverRecs = await parseDrivers(buffer)
           await upsertAll('drivers', 'driver_id', driverRecs, 200, (done, total) => {
             const pct = 15 + Math.round((done / total) * 80)
