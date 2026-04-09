@@ -43,7 +43,7 @@ function cfg() {
   return {
     BASE_URL:    (process.env.MAAS360_BASE_URL  ?? 'https://services.m3.maas360.com').replace(/\/$/, ''),
     BILLING_ID:  process.env.MAAS360_BILLING_ID  ?? '',
-    PLATFORM_ID: process.env.MAAS360_PLATFORM_ID ?? '5',
+    PLATFORM_ID: process.env.MAAS360_PLATFORM_ID ?? '3',
     APP_ID:      process.env.MAAS360_APP_ID       ?? '',
     APP_VERSION: process.env.MAAS360_APP_VERSION  ?? '1.0',
     ACCESS_KEY:  process.env.MAAS360_APP_ACCESS_KEY ?? process.env.MAAS360_ACCESS_KEY ?? '',
@@ -120,18 +120,21 @@ async function getAuthToken(): Promise<string> {
   if (!USERNAME)   throw new Error('MAAS360_USERNAME not set')
   if (!PASSWORD)   throw new Error('MAAS360_PASSWORD not set')
 
-  // Body format: no outer <authRequest> wrapper — confirmed from MaaS360 API tester
+  // Body format matches M360 API tester: <authRequest> wraps <maaS360AdminAuth>
+  // Field order matches M360 reference: platformID, billingID, password, userName, appID, appVersion, appAccessKey
   const xmlBody = [
     '<?xml version="1.0" encoding="UTF-8"?>',
-    '<maaS360AdminAuth>',
-    `  <billingID>${escapeXml(BILLING_ID)}</billingID>`,
-    `  <platformID>${escapeXml(PLATFORM_ID)}</platformID>`,
-    `  <appID>${escapeXml(APP_ID)}</appID>`,
-    `  <appVersion>${escapeXml(APP_VERSION)}</appVersion>`,
-    `  <appAccessKey>${escapeXml(ACCESS_KEY)}</appAccessKey>`,
-    `  <userName>${escapeXml(USERNAME)}</userName>`,
-    `  <password>${escapeXml(PASSWORD)}</password>`,
-    '</maaS360AdminAuth>',
+    '<authRequest>',
+    '\t<maaS360AdminAuth>',
+    `\t\t<platformID>${escapeXml(PLATFORM_ID)}</platformID>`,
+    `\t\t<billingID>${escapeXml(BILLING_ID)}</billingID>`,
+    `\t\t<password>${escapeXml(PASSWORD)}</password>`,
+    `\t\t<userName>${escapeXml(USERNAME)}</userName>`,
+    `\t\t<appID>${escapeXml(APP_ID)}</appID>`,
+    `\t\t<appVersion>${escapeXml(APP_VERSION)}</appVersion>`,
+    `\t\t<appAccessKey>${escapeXml(ACCESS_KEY)}</appAccessKey>`,
+    '\t</maaS360AdminAuth>',
+    '</authRequest>',
   ].join('\n')
 
   const res = await fetch(`${BASE_URL}/auth-apis/auth/1.0/authenticate/${BILLING_ID}`, {
