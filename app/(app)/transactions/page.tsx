@@ -24,8 +24,9 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   // Admin-only page
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: profile } = await supabase.from('user_profiles').select('is_admin').eq('id', user!.id).single()
-  const isAdmin = profile?.is_admin === true || user!.email === (process.env.ADMIN_EMAIL ?? '')
+  if (!user) redirect('/')
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin').eq('id', user.id).single()
+  const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
   if (!isAdmin) redirect('/')
 
   const { count: totalCount } = await supabase

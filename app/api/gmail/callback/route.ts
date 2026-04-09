@@ -43,8 +43,8 @@ export async function GET(req: NextRequest) {
     const token = await tokenRes.json()
 
     // Store token in Supabase (app_config table) so it persists and can be refreshed
-    const service = createClient()
-    await (await service).from('app_config').upsert({
+    const service = await createClient()
+    await service.from('app_config').upsert({
       key:        'gmail_token',
       value:      JSON.stringify(token),
       updated_by: user.email,

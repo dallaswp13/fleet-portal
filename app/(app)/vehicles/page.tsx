@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 import VehiclesTable from '@/components/VehiclesTable'
 import type { FleetOverview } from '@/types'
 import { getOfficesFromParam, getTabsFromParam, getAscFleetsFromParam, getFleetIdsFromFilters, SHEET_TABS } from '@/lib/filters'
@@ -35,9 +36,10 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
 
   // Enforce per-user office restriction — users can only see their assigned offices
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user!.id).single()
+  if (!user) redirect('/login')
+  const { data: profile } = await supabase.from('user_profiles').select('is_admin, offices').eq('id', user.id).single()
   const adminEmail = process.env.ADMIN_EMAIL ?? ''
-  const isAdminByEmail = adminEmail && user!.email === adminEmail
+  const isAdminByEmail = adminEmail && user.email === adminEmail
   const userOfficeRestriction: string[] | null =
     (profile?.is_admin === true || isAdminByEmail)
       ? null               // admins: unrestricted

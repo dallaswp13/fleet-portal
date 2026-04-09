@@ -66,7 +66,10 @@ def clean(val):
     return None if s in ('', ' ', 'nan', 'None', 'N/A', 'NaN') else s
 
 def norm_phone(phone):
+    """Normalize to 10 digits, stripping leading country code 1."""
     d = digits_only(phone)
+    if len(d) == 11 and d[0] == '1':
+        d = d[1:]
     return d if len(d) >= 10 else None
 
 # ─── CCSI ─────────────────────────────────────────────────────────────────────
@@ -118,8 +121,8 @@ def import_ccsi():
                 'rfid':                         g(row, 'RFID'),
                 'meter_bluetooth_name':         g(row, '(Meter) Bluetooth Name'),
                 'office':                       None,  # Set by DB trigger
-                'driver_phone_norm':            digits_only(dp),
-                'pim_phone_norm':               digits_only(pp),
+                'driver_phone_norm':            norm_phone(dp),
+                'pim_phone_norm':               norm_phone(pp),
             }
 
         records = list(seen.values())
