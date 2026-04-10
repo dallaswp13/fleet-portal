@@ -12,6 +12,7 @@ interface Props {
   totalPages: number; totalCount: number
   search: string; sort: string; dir: boolean
   fType: string; fCompliance: string; fModel: string; fOs: string; fPolicy: string
+  fAssoc: string
   osValues: string[]; policyValues: string[]
 }
 
@@ -40,7 +41,7 @@ const SEL = (active: boolean): React.CSSProperties => ({
   fontWeight: active ? 600 : 400,
 })
 
-export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, osValues, policyValues }: Props) {
+export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, fAssoc, osValues, policyValues }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
@@ -59,11 +60,11 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
   useEffect(() => { setLocalQ(search) }, [search])
 
   const nav = useCallback((overrides: Record<string, string> = {}) => {
-    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel, f_os: fOs, f_policy: fPolicy }
+    const base = { q: search, page: String(page), sort, dir: dir ? 'asc' : 'desc', per_page: String(perPage), f_type: fType, f_compliance: fCompliance, f_model: fModel, f_os: fOs, f_policy: fPolicy, f_assoc: fAssoc }
     const p    = new URLSearchParams({ ...base, ...overrides })
-    ;['f_type','f_compliance','f_model','f_os','f_policy','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
+    ;['f_type','f_compliance','f_model','f_os','f_policy','f_assoc','q'].forEach(k => { if (!p.get(k)) p.delete(k) })
     startTransition(() => router.replace(`${pathname}?${p.toString()}`, { scroll: false }))
-  }, [search, page, sort, dir, perPage, fType, fCompliance, fModel, fOs, fPolicy, pathname, router])
+  }, [search, page, sort, dir, perPage, fType, fCompliance, fModel, fOs, fPolicy, fAssoc, pathname, router])
 
   function handleSearch(val: string) {
     setLocalQ(val)
@@ -128,6 +129,43 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
         </button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 4, padding: '4px 4px', background: 'var(--bg2)', borderRadius: '4px', border: '1px solid var(--border)' }}>
+          <button
+            onClick={() => nav({ f_assoc: 'all', page: '0' })}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '3px',
+              border: 'none',
+              background: fAssoc === 'all' ? 'var(--accent)' : 'transparent',
+              color: fAssoc === 'all' ? 'white' : 'var(--text)',
+              fontWeight: fAssoc === 'all' ? 600 : 400,
+              fontSize: 12,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            All Devices
+          </button>
+          <button
+            onClick={() => nav({ f_assoc: 'unassociated', page: '0' })}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '3px',
+              border: 'none',
+              background: fAssoc === 'unassociated' ? 'var(--accent)' : 'transparent',
+              color: fAssoc === 'unassociated' ? 'white' : 'var(--text)',
+              fontWeight: fAssoc === 'unassociated' ? 600 : 400,
+              fontSize: 12,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            Unassociated
+          </button>
+        </div>
       </div>
 
       <div className="card">

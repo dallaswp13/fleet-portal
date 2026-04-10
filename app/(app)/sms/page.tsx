@@ -184,10 +184,21 @@ export default function SmsPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conversationMessages])
 
+  // Refresh conversation view when messages state updates
+  useEffect(() => {
+    if (selectedConversation) {
+      const convMessages = messages.filter(m => {
+        const msgPhone = m.direction === 'inbound' ? normalizePhone(m.sender_phone) : normalizePhone(m.recipient_phone)
+        return msgPhone === selectedConversation
+      }).sort((a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime())
+      setConversationMessages(convMessages)
+    }
+  }, [messages, selectedConversation])
+
   async function loadMessages() {
     setLoadingMsgs(true)
     const supabase = createClient()
-    const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(200)
+    const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(500)
     setMessages((data ?? []) as SmsMessage[])
     setLoadingMsgs(false)
   }
@@ -268,12 +279,7 @@ export default function SmsPage() {
       const data = await res.json()
       if (data.success) {
         setReplyText('')
-        await loadMessages()
-        const convMessages = messages.filter(m => {
-          const msgPhone = m.direction === 'inbound' ? normalizePhone(m.sender_phone) : normalizePhone(m.recipient_phone)
-          return msgPhone === selectedConversation
-        }).sort((a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime())
-        setConversationMessages(convMessages)
+        await loadMessages() // useEffect will refresh conversationMessages
       } else {
         setPollMsg({ ok: false, text: data.error ?? 'Failed to send' })
       }

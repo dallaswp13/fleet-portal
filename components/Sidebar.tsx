@@ -33,10 +33,13 @@ export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isA
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-logo">
-        <Image src="/logo.png" alt="Logo" width={42} height={42} style={{ borderRadius: 8, flexShrink: 0 }} />
-        <div>
-          <span>yellow.taxi</span>
+      <div className="sidebar-logo" style={{ gap: 12 }}>
+        <Image src="/logo.png" alt="Logo" width={46} height={46} style={{ borderRadius: 10, flexShrink: 0 }} />
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.5px', lineHeight: 1.1, color: 'var(--text)' }}>
+            yellow<span style={{ color: '#F5C518' }}>.taxi</span>
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 500, letterSpacing: '0.5px', marginTop: 2 }}>FLEET MANAGEMENT</span>
         </div>
       </div>
 

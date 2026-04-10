@@ -10,7 +10,7 @@ interface SearchParams {
   page?: string; q?: string; sort?: string; dir?: string; per_page?: string
   offices?: string; asc_fleets?: string
   f_type?: string; f_compliance?: string; f_model?: string
-  f_os?: string; f_policy?: string
+  f_os?: string; f_policy?: string; f_assoc?: string
 }
 
 export default async function DevicesPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -43,7 +43,11 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const fleetIds  = getFleetIdsFromFilters(offices, ascFleets)
 
+  const filterAssoc = params.f_assoc ?? 'all'
+
   let allowedNameKeys: string[] | null = null
+  let excludeNameKeys: string[] | null = null
+
   if (fleetIds !== null) {
     if (fleetIds.length === 0) return (
       <div className="page-content">
@@ -53,7 +57,15 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     )
     const { data: vehs } = await supabase
       .from('vehicles').select('vehicle_name_key').in('fleet_id', fleetIds).not('vehicle_name_key', 'is', null)
-    allowedNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
+    const vehicleNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
+
+    if (filterAssoc === 'unassociated') {
+      // For unassociated: exclude devices that match any vehicle name key
+      excludeNameKeys = vehicleNameKeys
+    } else {
+      // For all (default): include only devices that match a vehicle name key
+      allowedNameKeys = vehicleNameKeys
+    }
   }
 
   let query = supabase
@@ -65,6 +77,16 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   if (allowedNameKeys !== null) {
     if (allowedNameKeys.length === 0) query = query.eq('device_name', '___NO_MATCH___')
     else query = query.in('name_key', allowedNameKeys)
+  }
+
+  if (excludeNameKeys !== null) {
+    if (excludeNameKeys.length === 0) {
+      // No vehicles exist, so all devices are unassociated — show all
+      // (don't add any exclusion filter)
+    } else {
+      // Exclude devices that match any vehicle name key
+      query = query.not('name_key', 'in', `(${excludeNameKeys.map(k => `'${k}'`).join(',')})`)
+    }
   }
 
   // Type filter — PIM devices have device_name starting with literal '*'
@@ -108,6 +130,7 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
           search={search} sort={sort} dir={dir}
           fType={params.f_type ?? ''} fCompliance={params.f_compliance ?? ''}
           fModel={params.f_model ?? ''} fOs={params.f_os ?? ''} fPolicy={params.f_policy ?? ''}
+          fAssoc={filterAssoc}
           osValues={osValues} policyValues={policyValues}
         />
       </Suspense>

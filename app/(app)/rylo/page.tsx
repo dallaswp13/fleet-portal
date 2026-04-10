@@ -31,10 +31,11 @@ function PriorityDot({ priority, size = 8 }: { priority: string; size?: number }
 }
 
 /* ── Issue Card ───────────────────────────────────────────────── */
-function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) {
+function IssueCard({ issue, onUpdate, isAdmin }: { issue: Issue; onUpdate: () => void; isAdmin: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const [noteText, setNoteText] = useState('')
+  const [noteVehicle, setNoteVehicle] = useState('')
   const [saving, setSaving] = useState(false)
 
   // Editable fields
@@ -42,14 +43,12 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
   const [editBody, setEditBody] = useState(issue.body ?? '')
   const [editPriority, setEditPriority] = useState(issue.priority)
   const [editStatus, setEditStatus] = useState(issue.status)
-  const [editVehicle, setEditVehicle] = useState(String(issue.vehicle_number ?? ''))
 
   function startEdit() {
     setEditTitle(issue.title)
     setEditBody(issue.body ?? '')
     setEditPriority(issue.priority)
     setEditStatus(issue.status)
-    setEditVehicle(String(issue.vehicle_number ?? ''))
     setEditing(true)
     setExpanded(true)
   }
@@ -58,14 +57,12 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
     setSaving(true)
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    const vNum = editVehicle ? parseInt(editVehicle) || null : null
 
     const updates: Record<string, unknown> = {
       title: editTitle.trim(),
       body: editBody.trim() || null,
       priority: editPriority,
       status: editStatus,
-      vehicle_number: vNum,
       updated_at: new Date().toISOString(),
     }
 
@@ -91,9 +88,13 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
     setSaving(true)
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    const entry = { text: noteText.trim(), ts: new Date().toISOString(), author: user?.email ?? 'admin' }
+    let noteContent = noteText.trim()
+    if (noteVehicle.trim()) {
+      noteContent = `[Vehicle #${noteVehicle.trim()}] ${noteContent}`
+    }
+    const entry = { text: noteContent, ts: new Date().toISOString(), author: user?.email ?? 'admin' }
     const updatedLog = [entry, ...issue.notes_log]
-    const vNum = issue.vehicle_number
+    const vNum = noteVehicle ? parseInt(noteVehicle) || null : null
 
     await sb.from('issues').update({
       notes_log: updatedLog,
@@ -106,12 +107,12 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
       if (veh) {
         let vNotes: { text: string; ts: string }[] = []
         try { vNotes = JSON.parse(veh.notes ?? '[]') } catch { vNotes = [] }
-        vNotes.unshift({ text: `[Issue: ${issue.title}] ${noteText.trim()}`, ts: entry.ts })
+        vNotes.unshift({ text: `[Issue: ${issue.title}] ${noteContent}`, ts: entry.ts })
         await sb.from('vehicles').update({ notes: JSON.stringify(vNotes), updated_at: new Date().toISOString() }).eq('id', veh.id)
       }
     }
 
-    setNoteText(''); setSaving(false); onUpdate()
+    setNoteText(''); setNoteVehicle(''); setSaving(false); onUpdate()
   }
 
   const priorityDef = PRIORITIES.find(p => p.value === issue.priority) ?? PRIORITIES[1]
@@ -129,9 +130,6 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, flexWrap: 'wrap' }}>
               <div style={{ fontWeight: 600, fontSize: 13, opacity: isResolved ? 0.5 : 1, textDecoration: isResolved ? 'line-through' : undefined }}>{issue.title}</div>
-              {issue.vehicle_number && (
-                <span style={{ fontWeight: 700, fontSize: 12, color: 'var(--accent)' }}>#{issue.vehicle_number}</span>
-              )}
               <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: `${priorityDef.color}22`, color: priorityDef.color, fontWeight: 600 }}>
                 {priorityDef.label}
               </span>
@@ -184,27 +182,24 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
                 ))}
               </div>
             </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 4 }}>Status</div>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {STATUSES.map(s => (
-                  <button key={s.value} onClick={() => setEditStatus(s.value)}
-                    style={{
-                      padding: '4px 12px', fontSize: 12, borderRadius: 'var(--radius)', cursor: 'pointer',
-                      border: editStatus === s.value ? '2px solid var(--accent)' : '1px solid var(--border)',
-                      background: editStatus === s.value ? 'var(--accent-bg)' : 'var(--bg3)',
-                      fontWeight: editStatus === s.value ? 600 : 400,
-                    }}>
-                    {s.label}
-                  </button>
-                ))}
+            {isAdmin && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 4 }}>Status</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {STATUSES.map(s => (
+                    <button key={s.value} onClick={() => setEditStatus(s.value)}
+                      style={{
+                        padding: '4px 12px', fontSize: 12, borderRadius: 'var(--radius)', cursor: 'pointer',
+                        border: editStatus === s.value ? '2px solid var(--accent)' : '1px solid var(--border)',
+                        background: editStatus === s.value ? 'var(--accent-bg)' : 'var(--bg3)',
+                        fontWeight: editStatus === s.value ? 600 : 400,
+                      }}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 4 }}>Vehicle #</div>
-              <input value={editVehicle} onChange={e => setEditVehicle(e.target.value)}
-                placeholder="e.g. 6020" style={{ width: 100, fontSize: 12 }} />
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -227,15 +222,17 @@ function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) 
               ))}
             </div>
           )}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input value={noteText} onChange={e => setNoteText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addNote()}
-              placeholder="Add a note…" style={{ flex: 1, fontSize: 12 }} />
+              placeholder="Add a note…" style={{ flex: 1, minWidth: 200, fontSize: 12 }} />
+            <input value={noteVehicle} onChange={e => setNoteVehicle(e.target.value)}
+              placeholder="Vehicle # (optional)" style={{ width: 120, fontSize: 12 }} />
             <button className="btn-primary btn-sm" onClick={addNote} disabled={saving || !noteText.trim()}>Add</button>
           </div>
-          {issue.vehicle_number && (
+          {noteVehicle && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-              Notes are also added to vehicle #{issue.vehicle_number}&apos;s Notes tab.
+              Note will be added to vehicle #{noteVehicle}&apos;s Notes tab.
             </div>
           )}
         </div>
@@ -249,13 +246,13 @@ export default function RyloTrackerPage() {
   const [issues, setIssues] = useState<Issue[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<'open' | 'resolved'>('open')
+  const [isAdmin, setIsAdmin] = useState(false)
 
   // New issue form
   const [showNew, setShowNew] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newBody, setNewBody] = useState('')
   const [newPriority, setNewPriority] = useState('medium')
-  const [newVehicle, setNewVehicle] = useState('')
   const [addingIssue, setAddingIssue] = useState(false)
 
   const loadIssues = useCallback(async () => {
@@ -265,23 +262,33 @@ export default function RyloTrackerPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { loadIssues() }, [loadIssues])
+  useEffect(() => {
+    async function checkAdminStatus() {
+      const sb = createClient()
+      const { data: { user } } = await sb.auth.getUser()
+      if (user?.email) {
+        const { data: profile } = await sb.from('user_profiles').select('is_admin').eq('email', user.email).single()
+        setIsAdmin(profile?.is_admin ?? false)
+      }
+    }
+    loadIssues()
+    checkAdminStatus()
+  }, [loadIssues])
 
   async function addIssue() {
     if (!newTitle.trim()) return
     setAddingIssue(true)
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    const vNum = newVehicle ? parseInt(newVehicle) || null : null
     await sb.from('issues').insert({
       title: newTitle.trim(),
       body: newBody.trim() || null,
       priority: newPriority,
-      vehicle_number: vNum,
+      vehicle_number: null,
       notes_log: [],
       created_by: user?.email ?? 'admin'
     })
-    setNewTitle(''); setNewBody(''); setNewPriority('medium'); setNewVehicle('')
+    setNewTitle(''); setNewBody(''); setNewPriority('medium')
     setAddingIssue(false); setShowNew(false); loadIssues()
   }
 
@@ -327,11 +334,6 @@ export default function RyloTrackerPage() {
                   ))}
                 </div>
               </div>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 4 }}>Vehicle #</div>
-                <input value={newVehicle} onChange={e => setNewVehicle(e.target.value)}
-                  placeholder="optional" style={{ width: 100, fontSize: 12 }} />
-              </div>
               <button className="btn-primary" onClick={addIssue} disabled={addingIssue || !newTitle.trim()}
                 style={{ marginLeft: 'auto' }}>
                 {addingIssue ? <Spinner /> : 'Create Issue'}
@@ -356,7 +358,7 @@ export default function RyloTrackerPage() {
           {tab === 'open' ? 'No open issues.' : 'No resolved issues yet.'}
         </div>
       ) : (
-        displayed.map(i => <IssueCard key={i.id} issue={i} onUpdate={loadIssues} />)
+        displayed.map(i => <IssueCard key={i.id} issue={i} onUpdate={loadIssues} isAdmin={isAdmin} />)
       )}
     </div>
   )
