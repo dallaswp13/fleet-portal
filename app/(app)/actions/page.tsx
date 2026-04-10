@@ -401,35 +401,50 @@ function RebootTabletModal({ action, onClose }: { action: QuickAction; onClose: 
 }
 
 /* ── Get Available Line workflow ───────────────────────────── */
+const OFFICES = [
+  { label: 'ASC (E, L, S, Y, U)', value: 'ASC' },
+  { label: 'CYC (C)',              value: 'CYC' },
+  { label: 'SDY (G)',              value: 'SDY' },
+  { label: 'DEN (D)',              value: 'DEN' },
+]
+
 function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
-  const [fleet,     setFleet]     = useState('')
+  const [office,    setOffice]    = useState('')
   const [busy,      setBusy]      = useState(false)
   const [line,      setLine]      = useState<{ id: string; phone_number: string; mobile_plan: string | null } | null>(null)
+  const [availCount, setAvailCount] = useState(0)
   const [noLines,   setNoLines]   = useState(false)
   const [assignNum, setAssignNum] = useState('')
   const [result,    setResult]    = useState<{ ok: boolean; msg: string } | null>(null)
 
   async function findLine() {
-    if (!fleet) return
+    if (!office) return
     setBusy(true)
     const sb = createClient()
-    // Get all phone norms assigned to vehicles in this fleet
+
+    // Get all phone norms assigned to any vehicle (across all fleets sharing this office)
+    const fleetIds = office === 'ASC' ? ['E','L','S','Y','U']
+                   : office === 'CYC' ? ['C']
+                   : office === 'SDY' ? ['G']
+                   : office === 'DEN' ? ['D'] : []
     const { data: vehicles } = await sb.from('vehicles')
       .select('driver_phone_norm,pim_phone_norm')
-      .eq('fleet_id', fleet)
+      .in('fleet_id', fleetIds)
     const assignedNorms = new Set<string>()
     for (const v of vehicles ?? []) {
       if (v.driver_phone_norm) assignedNorms.add(v.driver_phone_norm)
       if (v.pim_phone_norm) assignedNorms.add(v.pim_phone_norm)
     }
-    // Get lines for this fleet that aren't assigned
+
+    // Get lines for this office that aren't assigned to any vehicle
     const { data: lines } = await sb.from('verizon_lines')
       .select('id,phone_number,phone_norm,mobile_plan')
-      .eq('fleet_id', fleet)
-      .limit(200)
+      .eq('office', office)
+      .limit(500)
     const available = (lines ?? []).filter(l => !assignedNorms.has(l.phone_norm ?? ''))
     setBusy(false)
     if (available.length === 0) { setNoLines(true); return }
+    setAvailCount(available.length)
     setLine(available[0])
   }
 
@@ -440,8 +455,6 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
     const sb = createClient()
     const { data: veh } = await sb.from('vehicles').select('id').eq('vehicle_number', num).limit(1).single()
     if (!veh) { setResult({ ok: false, msg: `Vehicle #${num} not found.` }); setBusy(false); return }
-    // This assigns the phone to the vehicle — user decides driver or PIM
-    // For now just show the line info for manual assignment
     setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\n\nAssign this number to vehicle #${num} in the Verizon tab.` })
     setBusy(false)
   }
@@ -449,35 +462,37 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
   return (
     <ModalShell action={action} onClose={onClose}>
       {result ? <ResultBanner ok={result.ok} msg={result.msg} /> :
-      !fleet ? (
+      !office ? (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Select Fleet</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-            {FLEETS.map(f => (
-              <button key={f.value} onClick={() => { setFleet(f.value); }}
-                style={{ padding: '9px 12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
-                {f.label}
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Select Office</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {OFFICES.map(o => (
+              <button key={o.value} onClick={() => setOffice(o.value)}
+                style={{ textAlign: 'left', padding: '10px 14px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>{o.value}</div>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{o.label}</div>
               </button>
             ))}
           </div>
         </div>
       ) : !line && !noLines ? (
         <div style={{ textAlign: 'center', padding: '20px 0' }}>
-          {busy ? <><span className="spinner" style={{ width: 20, height: 20 }} /><div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 10 }}>Searching for available lines in Fleet {fleet}…</div></> : (
+          {busy ? <><span className="spinner" style={{ width: 20, height: 20 }} /><div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 10 }}>Searching for available lines in {office}…</div></> : (
             <button className="btn-primary" onClick={findLine} style={{ background: action.color, borderColor: action.color }}>Find Available Line</button>
           )}
         </div>
       ) : noLines ? (
         <div>
-          <ResultBanner ok={false} msg={`No available lines found for Fleet ${fleet}. All lines are assigned.`} />
-          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => { setFleet(''); setNoLines(false) }}>← Try another fleet</button>
+          <ResultBanner ok={false} msg={`No available lines found for ${office}. All lines are assigned to vehicles.`} />
+          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => { setOffice(''); setNoLines(false) }}>Try another office</button>
         </div>
       ) : line ? (
         <div>
           <ConfirmBox rows={[
-            ['Fleet', fleet],
+            ['Office', office],
             ['Phone Number', line.phone_number],
             ['Plan', line.mobile_plan ?? 'Unknown'],
+            ['Available', `${availCount} unassigned line${availCount !== 1 ? 's' : ''} in ${office}`],
           ]} />
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, marginTop: 12 }}>Assign to Vehicle (optional)</div>
           <div style={{ display: 'flex', gap: 8 }}>
@@ -489,7 +504,7 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
             </button>
           </div>
           <button className="btn-secondary btn-sm" style={{ marginTop: 8, width: '100%' }}
-            onClick={() => { setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}` }) }}>
+            onClick={() => { setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\nOffice: ${office} (${availCount} available)` }) }}>
             Just show me the line
           </button>
         </div>

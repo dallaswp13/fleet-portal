@@ -194,17 +194,33 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
   try { parsed = parseXml(text) } catch { parsed = { _rawText: text } }
 
   // Auto-retry on token expiry (errorCode 1007)
-  if (isTokenExpiredResponse(parsed)) {
-    console.warn('[maas360] Token expired (1007) — refreshing and retrying.')
-    await invalidateToken()
+  // Also check non-OK HTTP status which often means token issue
+  if (isTokenExpiredResponse(parsed) || (!res.ok && text.includes('1007'))) {
+    console.warn('[maas360] Token expired (1007) — invalidating all caches and fetching fresh token.')
+    // Force full invalidation: clear both in-memory and DB cache
+    _memToken = null
+    try {
+      const svc = createServiceClient()
+      await svc.from('maas360_token').delete().eq('id', 1)
+    } catch { /* ignore */ }
+
+    // Small delay to ensure M360 server-side invalidation propagates
+    await new Promise(r => setTimeout(r, 500))
+
     const freshToken = await getAuthToken()
+    console.log(`[maas360] Got fresh token: ${freshToken.slice(0, 8)}… — retrying request.`)
     const retryOpts: RequestInit = { method, headers: authHeaders(freshToken) }
     if (body) retryOpts.body = body
     const retryRes  = await fetch(url, retryOpts)
     const retryText = await retryRes.text()
     let retryParsed: Record<string, unknown> = {}
     try { retryParsed = parseXml(retryText) } catch { retryParsed = { _rawText: retryText } }
-    return { ok: retryRes.ok, parsed: retryParsed, rawText: retryText }
+
+    // If STILL expired after fresh auth, something is seriously wrong
+    if (isTokenExpiredResponse(retryParsed)) {
+      console.error('[maas360] Token still expired after fresh auth — M360 may be rejecting the account.')
+    }
+    return { ok: retryRes.ok && !isTokenExpiredResponse(retryParsed), parsed: retryParsed, rawText: retryText }
   }
 
   return { ok: res.ok, parsed, rawText: text }
@@ -214,7 +230,12 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 
 export async function rebootDevice(deviceId: string): Promise<{ success: boolean; raw: unknown }> {
   const { BASE_URL, BILLING_ID } = cfg()
+
+  // Force-clear any stale cached token before critical operations
+  // This ensures we start with a fresh token
+  await invalidateToken()
   const token = await getAuthToken()
+  console.log(`[maas360] rebootDevice: using fresh token ${token.slice(0, 8)}… for device ${deviceId}`)
 
   // Try the dedicated reboot endpoint first (with an empty XML body)
   const emptyBody = '<?xml version="1.0" encoding="UTF-8"?><rebootRequest />'
@@ -223,10 +244,10 @@ export async function rebootDevice(deviceId: string): Promise<{ success: boolean
     token, 'POST', emptyBody
   )
 
-  if (ok) return { success: true, raw: parsed }
+  if (ok && !isTokenExpiredResponse(parsed)) return { success: true, raw: parsed }
 
   // Fallback: use the generic sendAction endpoint with RestartDevice
-  console.warn(`[maas360] Dedicated reboot endpoint failed (HTTP non-OK). Response: ${rawText.slice(0, 300)}. Trying sendAction fallback.`)
+  console.warn(`[maas360] Dedicated reboot endpoint failed. Response: ${rawText.slice(0, 300)}. Trying sendAction fallback.`)
   const fallback = await sendDeviceAction(deviceId, 'RestartDevice')
   if (fallback.success) return fallback
 
