@@ -455,7 +455,7 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
     const sb = createClient()
     const { data: veh } = await sb.from('vehicles').select('id').eq('vehicle_number', num).limit(1).single()
     if (!veh) { setResult({ ok: false, msg: `Vehicle #${num} not found.` }); setBusy(false); return }
-    setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\n\nAssign this number to vehicle #${num} in the Verizon tab.` })
+    setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\n\nAssign this number to vehicle #${num} in the Verizon tab.\n\n⚠️ Search for this number in MaaS360 first to make sure it is not already active on another device.` })
     setBusy(false)
   }
 
@@ -504,7 +504,7 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
             </button>
           </div>
           <button className="btn-secondary btn-sm" style={{ marginTop: 8, width: '100%' }}
-            onClick={() => { setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\nOffice: ${office} (${availCount} available)` }) }}>
+            onClick={() => { setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\nOffice: ${office} (${availCount} available)\n\n⚠️ Search for this number in MaaS360 first to make sure it is not already active on another device.` }) }}>
             Just show me the line
           </button>
         </div>
