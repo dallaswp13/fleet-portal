@@ -200,7 +200,13 @@ export default function SmsPage() {
     setLoadingMsgs(true)
     const supabase = createClient()
     const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(500)
-    setMessages((data ?? []) as SmsMessage[])
+    // Normalize: if migration 027 hasn't run, direction/recipient_phone may be missing
+    const normalized = (data ?? []).map(m => ({
+      ...m,
+      direction: m.direction ?? 'inbound',
+      recipient_phone: m.recipient_phone ?? null,
+    })) as SmsMessage[]
+    setMessages(normalized)
     setLoadingMsgs(false)
   }
 

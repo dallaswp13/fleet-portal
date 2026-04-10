@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 /* ── Types ─────────────────────────────────────────────────── */
@@ -587,56 +587,58 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
 function ExportDataModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
   const [busy,   setBusy]   = useState(false)
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [fieldCount, setFieldCount] = useState(0)
 
-  async function exportAll() {
+  useEffect(() => {
+    // Check if user has saved field preferences
+    try {
+      const saved = localStorage.getItem('fleet-export-fields')
+      if (saved) {
+        const arr = JSON.parse(saved)
+        if (Array.isArray(arr)) setFieldCount(arr.length)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  function exportWithPrefs() {
     setBusy(true)
-    const sb = createClient()
-    const { data } = await sb
-      .from('fleet_overview')
-      .select('*')
-      .order('vehicle_number')
-      .limit(5000)
-    if (!data || data.length === 0) { setResult({ ok: false, msg: 'No data found.' }); setBusy(false); return }
-
-    // Build CSV
-    const cols = [
-      'vehicle_number','fleet_id','sheet_tab','online_status',
-      'driver_app_version','pim_app_version','meter_status',
-      'driver_tablet_phone_number','pim_phone_number',
-      'device_name','pim_device_name',
-      'm360_device_id','pim_m360_device_id',
-      'monthly_usage_gb','pim_monthly_usage_gb',
-      'verizon_user','mobile_plan',
-      'rfid','meter_bluetooth_name',
-      'office','last_pim_payment',
-    ]
-    const header = cols.join(',')
-    const rows = data.map(row =>
-      cols.map(c => {
-        const v = (row as Record<string,unknown>)[c]
-        if (v === null || v === undefined) return ''
-        const s = String(v)
-        return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-      }).join(',')
-    )
-    const csv = [header, ...rows].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href = url; a.download = `fleet-export-${new Date().toISOString().slice(0,10)}.csv`
-    a.click(); URL.revokeObjectURL(url)
-    setBusy(false)
-    setResult({ ok: true, msg: `✓ Exported ${data.length} vehicles with all linked fields.` })
+    try {
+      // Use saved preferences from the Export Data settings panel
+      const saved = localStorage.getItem('fleet-export-fields')
+      let keys = ''
+      if (saved) {
+        const arr = JSON.parse(saved)
+        if (Array.isArray(arr) && arr.length > 0) keys = arr.join(',')
+      }
+      // Use the XLSX export endpoint with saved field preferences
+      const url = keys ? `/api/export?fields=${keys}` : '/api/export'
+      window.open(url, '_blank')
+      setBusy(false)
+      setResult({ ok: true, msg: `✓ Export started${keys ? ` with ${keys.split(',').length} selected fields` : ' with all fields'}.` })
+    } catch {
+      setBusy(false)
+      setResult({ ok: false, msg: 'Export failed.' })
+    }
   }
 
   return (
     <ModalShell action={action} onClose={onClose}>
       {result ? <ResultBanner ok={result.ok} msg={result.msg} /> : (
         <div>
-          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-            Downloads a CSV with vehicle as the primary row. Includes device names, M360 IDs, phone numbers, Verizon usage, meter status, app versions, and office.
+          <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 12 }}>
+            Downloads an Excel file with your fleet data. Uses your saved field preferences from Settings → Export Data.
           </div>
-          <ActionButtons busy={busy} onConfirm={exportAll} color={action.color} label="Download CSV" />
+          {fieldCount > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ fontSize: 14 }}>✓</span> {fieldCount} fields selected from your preferences
+            </div>
+          )}
+          {!fieldCount && (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>
+              No saved preferences — all fields will be exported. Customize in Settings → Export Data.
+            </div>
+          )}
+          <ActionButtons busy={busy} onConfirm={exportWithPrefs} color={action.color} label="Download Excel (.xlsx)" />
         </div>
       )}
     </ModalShell>

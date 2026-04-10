@@ -9,6 +9,25 @@ const DEFAULT_FIELDS = new Set([
   'pim_device_name','pim_m360_device_id','pim_phone_number_verizon',
 ])
 
+const STORAGE_KEY = 'fleet-export-fields'
+
+function loadSavedFields(): Set<string> | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      const arr = JSON.parse(saved)
+      if (Array.isArray(arr) && arr.length > 0) return new Set(arr)
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+function saveFieldPrefs(selected: Set<string>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(selected)))
+  } catch { /* ignore */ }
+}
+
 export default function ExportDataPanel() {
   const [fields,   setFields]   = useState<FieldDef[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set(DEFAULT_FIELDS))
@@ -17,7 +36,13 @@ export default function ExportDataPanel() {
   useEffect(() => {
     fetch('/api/export', { method: 'POST' })
       .then(r => r.json())
-      .then(d => { setFields(d.fields ?? []); setLoading(false) })
+      .then(d => {
+        setFields(d.fields ?? [])
+        // Restore saved preferences, falling back to defaults
+        const saved = loadSavedFields()
+        if (saved) setSelected(saved)
+        setLoading(false)
+      })
       .catch(() => setLoading(false))
   }, [])
 
@@ -25,13 +50,14 @@ export default function ExportDataPanel() {
     setSelected(prev => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
+      saveFieldPrefs(next)
       return next
     })
   }
 
-  function selectAll()  { setSelected(new Set(fields.map(f => f.key))) }
-  function selectNone() { setSelected(new Set()) }
-  function selectDefaults() { setSelected(new Set(DEFAULT_FIELDS)) }
+  function selectAll()  { const s = new Set(fields.map(f => f.key)); setSelected(s); saveFieldPrefs(s) }
+  function selectNone() { const s = new Set<string>(); setSelected(s); saveFieldPrefs(s) }
+  function selectDefaults() { const s = new Set(DEFAULT_FIELDS); setSelected(s); saveFieldPrefs(s) }
 
   function download() {
     const keys = fields.filter(f => selected.has(f.key)).map(f => f.key).join(',')

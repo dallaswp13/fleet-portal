@@ -13,6 +13,7 @@ interface Props {
   search: string; sort: string; dir: boolean
   fType: string; fCompliance: string; fModel: string; fOs: string; fPolicy: string
   fAssoc: string
+  unassociatedCount: number
   osValues: string[]; policyValues: string[]
 }
 
@@ -36,7 +37,7 @@ function shortOs(s: string | null | undefined) {
 
 const selClass = (active: boolean) => `filter-select${active ? ' filter-active' : ''}`
 
-export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, fAssoc, osValues, policyValues }: Props) {
+export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, fAssoc, unassociatedCount, osValues, policyValues }: Props) {
   const [, startTransition] = useTransition()
   const router   = useRouter()
   const pathname = usePathname()
@@ -135,6 +136,16 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
           <button className={`toggle-btn ${fAssoc === 'unassociated' ? 'toggle-active' : ''}`}
             onClick={() => nav({ f_assoc: 'unassociated', page: '0' })}>
             Unassociated
+            {unassociatedCount > 0 && (
+              <span style={{
+                marginLeft: 6, fontSize: 10, fontWeight: 700,
+                background: fAssoc === 'unassociated' ? 'rgba(255,255,255,0.25)' : 'var(--amber)',
+                color: fAssoc === 'unassociated' ? '#fff' : '#fff',
+                borderRadius: 10, padding: '1px 7px', minWidth: 20, textAlign: 'center', display: 'inline-block'
+              }}>
+                {unassociatedCount}
+              </span>
+            )}
           </button>
         </div>
       </div>

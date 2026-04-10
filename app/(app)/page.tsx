@@ -2,9 +2,12 @@ import { createClient } from '@/lib/supabase/server'
 import { unstable_cache } from 'next/cache'
 import DashboardCharts from '@/components/DashboardCharts'
 import DashboardStats from '@/components/DashboardStats'
+import { SMSActivityFeed, IssueTrackerSummary, VerizonUsageAlerts, FleetTrendChart } from '@/components/DashboardWidgets'
 import { getOfficesFromParam, getTabsFromParam, getAscFleetsFromParam, getFleetIdsFromFilters, OFFICES, SHEET_TABS } from '@/lib/filters'
 
 interface SearchParams { offices?: string; tabs?: string; asc_fleets?: string }
+
+const USAGE_ALERT_THRESHOLD = 5 // GB — lines above this show in alerts
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const params  = await searchParams
@@ -37,13 +40,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     { count: totalLines },
     { data: recentAudit },
     { data: usageData },
+    // New widget data
+    { data: recentSms },
+    { count: smsTodayCount },
+    { count: smsUnprocessedCount },
+    { data: openIssues },
+    { data: verizonAlertData },
+    { data: suspendedLines },
+    { data: trendData },
   ] = await Promise.all([
     vehicleQuery(),
     vehicleQuery().ilike('online_status', 'Online%'),
     vehicleQuery().ilike('online_status', 'Offline%'),
     vehicleQuery().not('online_status', 'ilike', 'Online%').not('online_status', 'ilike', 'Offline%'),
     // Devices: count distinct devices linked to vehicles in the selected offices
-    // fleet_overview has device_id + office, count non-null device_ids
     (() => {
       let q = supabase.from('fleet_overview').select('device_id', { count: 'exact', head: true }).not('device_id', 'is', null)
       if (fleetIds !== null) {
@@ -75,8 +85,53 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       if (!allTabs) q = q.in('sheet_tab', tabs)
       return q
     })(),
+
+    // ── SMS Activity Feed ──
+    supabase.from('sms_messages')
+      .select('sender,sms_text,received_at,action,success')
+      .order('received_at', { ascending: false })
+      .limit(8),
+    supabase.from('sms_messages')
+      .select('*', { count: 'exact', head: true })
+      .gte('received_at', new Date(new Date().setHours(0,0,0,0)).toISOString()),
+    supabase.from('sms_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('processed', false),
+
+    // ── Issue Tracker Summary ──
+    supabase.from('issues')
+      .select('id,title,priority,created_at')
+      .eq('status', 'open')
+      .order('created_at', { ascending: false })
+      .limit(50),
+
+    // ── Verizon Alerts: high usage ──
+    supabase.from('verizon_lines')
+      .select('phone_number,verizon_user,monthly_usage_gb,phone_status,office')
+      .gte('monthly_usage_gb', USAGE_ALERT_THRESHOLD)
+      .order('monthly_usage_gb', { ascending: false })
+      .limit(20),
+    // Suspended lines
+    supabase.from('verizon_lines')
+      .select('phone_number,verizon_user,monthly_usage_gb,phone_status,office')
+      .ilike('phone_status', '%suspend%')
+      .limit(20),
+
+    // ── Fleet Trend Data ──
+    supabase.from('daily_snapshots')
+      .select('snapshot_date,online_count,offline_count,inactive_count,device_count,open_issues')
+      .order('snapshot_date', { ascending: true })
+      .limit(90),
   ])
 
+  // Also fire-and-forget a snapshot record for today
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL
+    if (baseUrl) {
+      const snapshotUrl = baseUrl.startsWith('http') ? `${baseUrl}/api/snapshot` : `https://${baseUrl}/api/snapshot`
+      fetch(snapshotUrl, { method: 'POST' }).catch(() => {})
+    }
+  } catch { /* ignore */ }
 
   // Build top usage list from fleet_overview (device-centric, combined driver+PIM)
   type UsageRow = { vehicle_number: number | null; fleet_id: string | null; device_name: string | null; pim_device_name: string | null; monthly_usage_gb: number | null; pim_monthly_usage_gb: number | null; office: string | null }
@@ -106,6 +161,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     import_ccsi: '📊 Import CCSI', import_devices: '📱 Import Devices', import_verizon: '📡 Import Verizon',
   }
 
+  // ── Build SMS Activity data ──
+  const smsActivity = {
+    recentMessages: (recentSms ?? []).map((m: Record<string, unknown>) => ({
+      sender:      String(m.sender ?? ''),
+      sms_text:    String(m.sms_text ?? ''),
+      received_at: String(m.received_at ?? ''),
+      action:      m.action as string | null,
+      success:     m.success as boolean | null,
+    })),
+    totalToday:       smsTodayCount ?? 0,
+    unprocessedCount: smsUnprocessedCount ?? 0,
+  }
+
+  // ── Build Issue Tracker Summary ──
+  const issuesList = (openIssues ?? []) as { id: string; title: string; priority: string; created_at: string }[]
+  const issueSummary = {
+    highCount:   issuesList.filter(i => i.priority === 'high').length,
+    mediumCount: issuesList.filter(i => i.priority === 'medium' || i.priority === 'normal').length,
+    lowCount:    issuesList.filter(i => i.priority === 'low').length,
+    totalOpen:   issuesList.length,
+    newest:      issuesList.slice(0, 4),
+  }
+
+  // ── Build Verizon Alerts ──
+  type VzRow = { phone_number: string; verizon_user: string | null; monthly_usage_gb: number | null; phone_status: string | null; office: string | null }
+  const verizonAlerts = [
+    ...(suspendedLines ?? []).map((l: VzRow) => ({ ...l, alertType: 'suspended' as const })),
+    ...(verizonAlertData ?? []).map((l: VzRow) => ({ ...l, alertType: 'high_usage' as const })),
+  ]
+
+  // ── Build Trend Data ──
+  type SnapRow = { snapshot_date: string; online_count: number; offline_count: number; inactive_count: number; device_count: number; open_issues: number }
+  const trendPoints = ((trendData ?? []) as SnapRow[]).map(s => ({
+    date:       s.snapshot_date,
+    online:     s.online_count,
+    offline:    s.offline_count,
+    inactive:   s.inactive_count,
+    devices:    s.device_count,
+    openIssues: s.open_issues,
+  }))
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -125,6 +221,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         fleetStatus={{ online: online ?? 0, offline: offline ?? 0, inactive: inactive ?? 0 }}
         topUsage={topUsage}
       />
+
+      {/* New widget row: SMS · Issues · Verizon Alerts */}
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 24 }}>
+        <SMSActivityFeed data={smsActivity} />
+        <IssueTrackerSummary data={issueSummary} />
+        <VerizonUsageAlerts alerts={verizonAlerts} usageThreshold={USAGE_ALERT_THRESHOLD} />
+      </div>
+
+      {/* Fleet Trend Chart */}
+      <FleetTrendChart data={trendPoints} />
 
       {/* Recent Actions */}
       <div className="card" style={{ marginTop: 24 }}>

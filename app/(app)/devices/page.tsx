@@ -45,9 +45,8 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
 
   const filterAssoc = params.f_assoc ?? 'all'
 
-  let allowedNameKeys: string[] | null = null
-  let excludeNameKeys: string[] | null = null
-
+  // Get all vehicle name keys (for fleet-filtered or all)
+  let allVehicleNameKeys: string[] = []
   if (fleetIds !== null) {
     if (fleetIds.length === 0) return (
       <div className="page-content">
@@ -57,41 +56,46 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     )
     const { data: vehs } = await supabase
       .from('vehicles').select('vehicle_name_key').in('fleet_id', fleetIds).not('vehicle_name_key', 'is', null)
-    const vehicleNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
-
-    if (filterAssoc === 'unassociated') {
-      // For unassociated: exclude devices that match any vehicle name key
-      excludeNameKeys = vehicleNameKeys
-    } else {
-      // For all (default): include only devices that match a vehicle name key
-      allowedNameKeys = vehicleNameKeys
-    }
-  } else if (filterAssoc === 'unassociated') {
-    // Admin with no fleet filter - get ALL vehicle name keys to exclude
+    allVehicleNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
+  } else {
+    // Admin with no fleet filter — get all vehicle name keys
     const { data: vehs } = await supabase
       .from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
-    excludeNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
+    allVehicleNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
   }
 
+  // Build the main device query
   let query = supabase
     .from('devices')
     .select('*', { count: 'exact' })
     .order(sort, { ascending: dir })
     .range(page * perPage, (page + 1) * perPage - 1)
 
-  if (allowedNameKeys !== null) {
-    if (allowedNameKeys.length === 0) query = query.eq('device_name', '___NO_MATCH___')
-    else query = query.in('name_key', allowedNameKeys)
-  }
-
-  if (excludeNameKeys !== null) {
-    if (excludeNameKeys.length === 0) {
-      // No vehicles exist, so all devices are unassociated — show all
-      // (don't add any exclusion filter)
-    } else {
-      // Exclude devices that match any vehicle name key OR have null name_key
-      query = query.or(`name_key.not.in.(${excludeNameKeys.join(',')}),name_key.is.null`)
+  // Apply association filter
+  if (filterAssoc === 'unassociated') {
+    // Show devices NOT matching any vehicle name key
+    if (allVehicleNameKeys.length > 0) {
+      // Use .not() with 'in' operator — this properly excludes matching name_keys
+      // NULL name_keys won't match the NOT IN, so they're excluded too.
+      // We need to manually include NULLs since SQL NOT IN doesn't match NULL.
+      // Strategy: get IDs of devices whose name_key IS in the vehicle list, then exclude those IDs
+      const { data: associatedDevices } = await supabase
+        .from('devices')
+        .select('id')
+        .in('name_key', allVehicleNameKeys)
+      const associatedIds = (associatedDevices ?? []).map(d => d.id)
+      if (associatedIds.length > 0) {
+        // Exclude associated device IDs — this is bulletproof regardless of name_key format
+        query = query.not('id', 'in', `(${associatedIds.join(',')})`)
+      }
+      // If no associated devices found, all devices are unassociated — no filter needed
     }
+    // If no vehicle name keys at all, every device is unassociated — show all
+  } else if (fleetIds !== null && allVehicleNameKeys.length > 0) {
+    // "All Devices" with fleet filter — only show devices matching fleet vehicles
+    query = query.in('name_key', allVehicleNameKeys)
+  } else if (fleetIds !== null && allVehicleNameKeys.length === 0) {
+    query = query.eq('device_name', '___NO_MATCH___')
   }
 
   // Type filter — PIM devices have device_name starting with literal '*'
@@ -109,6 +113,26 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
   if (search) {
     const like = `%${search}%`
     query = query.or(`device_name.ilike.${like},m360_user.ilike.${like},tablet_model.ilike.${like},imei.ilike.${like}`)
+  }
+
+  // Count unassociated devices for the badge
+  let unassociatedCount = 0
+  if (allVehicleNameKeys.length > 0) {
+    // Count devices whose name_key is NOT in the vehicle list (or is null)
+    const { data: associatedDevices } = await supabase
+      .from('devices')
+      .select('id')
+      .in('name_key', allVehicleNameKeys)
+    const { count: totalDevices } = await supabase
+      .from('devices')
+      .select('*', { count: 'exact', head: true })
+    unassociatedCount = (totalDevices ?? 0) - (associatedDevices?.length ?? 0)
+  } else {
+    // No vehicles = all devices are unassociated
+    const { count: totalDevices } = await supabase
+      .from('devices')
+      .select('*', { count: 'exact', head: true })
+    unassociatedCount = totalDevices ?? 0
   }
 
   const [{ data, count }, { data: filterData }] = await Promise.all([
@@ -136,6 +160,7 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
           fType={params.f_type ?? ''} fCompliance={params.f_compliance ?? ''}
           fModel={params.f_model ?? ''} fOs={params.f_os ?? ''} fPolicy={params.f_policy ?? ''}
           fAssoc={filterAssoc}
+          unassociatedCount={unassociatedCount}
           osValues={osValues} policyValues={policyValues}
         />
       </Suspense>

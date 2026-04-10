@@ -315,6 +315,10 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
 .tab-link:hover { color: var(--text2); text-decoration: none; }
 .tab-link.tab-active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
 
+/* Hover row — subtle highlight on click targets */
+.hover-row { cursor: pointer; transition: background 0.12s; }
+.hover-row:hover { background: var(--bg3); }
+
 /* Filter pill - active state for selects/inputs */
 .filter-active {
   background: var(--accent-dim, rgba(59,130,246,0.1)) !important;

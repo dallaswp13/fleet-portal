@@ -597,8 +597,15 @@ export async function POST(req: NextRequest) {
       },
     ]
 
-    // Insert all messages
-    const { error } = await service.from('sms_messages').insert(messages)
+    // Insert all messages — try with Twilio columns first, fall back without them
+    let { error } = await service.from('sms_messages').insert(messages)
+
+    if (error && error.message.includes('direction')) {
+      // Migration 027 not applied yet — strip Twilio-specific columns and retry
+      const fallbackMessages = messages.map(({ direction, source, twilio_sid, recipient_phone, ...rest }) => rest)
+      const retry = await service.from('sms_messages').insert(fallbackMessages)
+      error = retry.error
+    }
 
     if (error) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 })

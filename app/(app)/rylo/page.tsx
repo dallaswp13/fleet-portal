@@ -292,7 +292,9 @@ export default function RyloTrackerPage() {
     setAddingIssue(false); setShowNew(false); loadIssues()
   }
 
-  const openIssues = issues.filter(i => i.status === 'open')
+  const priorityWeight: Record<string, number> = { high: 0, medium: 1, low: 2 }
+  const sortByPriority = (a: Issue, b: Issue) => (priorityWeight[a.priority] ?? 1) - (priorityWeight[b.priority] ?? 1)
+  const openIssues = issues.filter(i => i.status === 'open').sort(sortByPriority)
   const resolvedIssues = issues.filter(i => i.status === 'resolved')
   const displayed = tab === 'open' ? openIssues : resolvedIssues
 

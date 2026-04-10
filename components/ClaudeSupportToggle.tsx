@@ -46,12 +46,12 @@ export default function ClaudeSupportToggle() {
               <span>Anthropic API: {status.claude ? 'Connected' : 'Not configured'}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.m360 ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
-              <span>MaaS360 API: {status.m360 ? 'Connected' : 'Not configured'}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.twilio ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
               <span>Twilio SMS: {status.twilio ? 'Connected' : 'Not configured'}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.m360 ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
+              <span>MaaS360 API: {status.m360 ? 'Connected' : 'Not configured'}</span>
             </div>
           </div>
           {(!status.claude || !status.m360 || !status.twilio) && (
