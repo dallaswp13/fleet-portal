@@ -47,7 +47,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     { data: openIssues },
     { data: verizonAlertData },
     { data: suspendedLines },
-    { data: trendData },
   ] = await Promise.all([
     vehicleQuery(),
     vehicleQuery().ilike('online_status', 'Online%'),
@@ -116,22 +115,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       .select('phone_number,verizon_user,monthly_usage_gb,phone_status,office')
       .ilike('phone_status', '%suspend%')
       .limit(20),
-
-    // ── Fleet Trend Data ──
-    supabase.from('daily_snapshots')
-      .select('snapshot_date,online_count,offline_count,inactive_count,device_count,open_issues')
-      .order('snapshot_date', { ascending: true })
-      .limit(90),
   ])
-
-  // Also fire-and-forget a snapshot record for today
-  try {
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL
-    if (baseUrl) {
-      const snapshotUrl = baseUrl.startsWith('http') ? `${baseUrl}/api/snapshot` : `https://${baseUrl}/api/snapshot`
-      fetch(snapshotUrl, { method: 'POST' }).catch(() => {})
-    }
-  } catch { /* ignore */ }
 
   // Build top usage list from fleet_overview (device-centric, combined driver+PIM)
   type UsageRow = { vehicle_number: number | null; fleet_id: string | null; device_name: string | null; pim_device_name: string | null; monthly_usage_gb: number | null; pim_monthly_usage_gb: number | null; office: string | null }
@@ -191,16 +175,29 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     ...(verizonAlertData ?? []).map((l: VzRow) => ({ ...l, alertType: 'high_usage' as const })),
   ]
 
-  // ── Build Trend Data ──
-  type SnapRow = { snapshot_date: string; online_count: number; offline_count: number; inactive_count: number; device_count: number; open_issues: number }
-  const trendPoints = ((trendData ?? []) as SnapRow[]).map(s => ({
-    date:       s.snapshot_date,
-    online:     s.online_count,
-    offline:    s.offline_count,
-    inactive:   s.inactive_count,
-    devices:    s.device_count,
-    openIssues: s.open_issues,
-  }))
+  // ── Fleet Size Trend Data (from Active Vehicle Tracker) ──
+  // Monthly snapshots: date, total, ASC, CYC (C Fleet), other (G+O+D fleets)
+  const trendPoints = [
+    { date: '2024-09-01', total: 1234, asc: 810, cyc: 252, other: 172 },
+    { date: '2024-10-01', total: 1276, asc: 829, cyc: 274, other: 173 },
+    { date: '2024-11-01', total: 1281, asc: 830, cyc: 278, other: 173 },
+    { date: '2024-12-01', total: 1277, asc: 832, cyc: 274, other: 171 },
+    { date: '2025-01-01', total: 1290, asc: 840, cyc: 282, other: 168 },
+    { date: '2025-02-01', total: 1278, asc: 834, cyc: 272, other: 172 },
+    { date: '2025-03-01', total: 1293, asc: 852, cyc: 271, other: 170 },
+    { date: '2025-04-01', total: 1313, asc: 865, cyc: 274, other: 174 },
+    { date: '2025-05-01', total: 1324, asc: 878, cyc: 272, other: 174 },
+    { date: '2025-06-01', total: 1330, asc: 894, cyc: 270, other: 166 },
+    { date: '2025-07-01', total: 1435, asc: 900, cyc: 264, other: 271 },
+    { date: '2025-08-01', total: 1466, asc: 935, cyc: 258, other: 273 },
+    { date: '2025-09-01', total: 1462, asc: 933, cyc: 258, other: 271 },
+    { date: '2025-10-01', total: 1498, asc: 956, cyc: 259, other: 283 },
+    { date: '2025-11-01', total: 1487, asc: 952, cyc: 261, other: 274 },
+    { date: '2025-12-01', total: 1483, asc: 955, cyc: 257, other: 271 },
+    { date: '2026-01-01', total: 1463, asc: 938, cyc: 256, other: 269 },
+    { date: '2026-02-01', total: 1459, asc: 942, cyc: 260, other: 257 },
+    { date: '2026-03-01', total: 1500, asc: 979, cyc: 257, other: 264 },
+  ]
 
   return (
     <div className="page-content">

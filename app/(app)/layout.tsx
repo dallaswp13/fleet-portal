@@ -4,6 +4,7 @@ import Sidebar from '@/components/Sidebar'
 import ThemeToggle from '@/components/ThemeToggle'
 import ClaudeSupportToggle from '@/components/ClaudeSupportToggle'
 import M360StatusIndicator from '@/components/M360StatusIndicator'
+import TwilioStatusIndicator from '@/components/TwilioStatusIndicator'
 import { Suspense } from 'react'
 import OfficeFilter from '@/components/OfficeFilter'
 import { OFFICES, type Office } from '@/lib/filters'
@@ -40,6 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <OfficeFilter allowedOffices={allowedOffices} />
           </Suspense>
           <div style={{ flex: 1 }} />
+          <TwilioStatusIndicator />
           <M360StatusIndicator />
           <ClaudeSupportToggle />
           <ThemeToggle />

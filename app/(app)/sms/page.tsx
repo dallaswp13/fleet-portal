@@ -636,15 +636,46 @@ export default function SmsPage() {
 
             {/* Message Thread */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {conversationMessages.map(msg => (
-                <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.direction === 'outbound' ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+              {conversationMessages.map(msg => {
+                const isOutbound = msg.direction === 'outbound'
+                const isAutoReply = isOutbound && msg.action === 'auto_reply'
+                // Outbound from Dallas: blue, auto-reply: teal/green, inbound: distinct card
+                const bubbleBg = isAutoReply
+                  ? 'linear-gradient(135deg, #0d9488, #14b8a6)'
+                  : isOutbound
+                    ? 'var(--accent)'
+                    : 'var(--bg2)'
+                const bubbleColor = isOutbound ? 'white' : 'var(--text)'
+                const bubbleBorder = isOutbound ? 'none' : '1px solid var(--border)'
+                const bubbleShadow = isOutbound ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
+
+                return (
+                <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isOutbound ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+                  {/* Sender label for inbound messages */}
+                  {!isOutbound && (
+                    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 2, marginLeft: 4 }}>
+                      {msg.sender || 'Unknown'}
+                    </div>
+                  )}
+                  {isAutoReply && (
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#14b8a6', marginBottom: 2, marginRight: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11 }}>⚡</span> Auto-Reply
+                    </div>
+                  )}
+                  {isOutbound && !isAutoReply && (
+                    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 2, marginRight: 4 }}>
+                      {msg.sender || 'You'}
+                    </div>
+                  )}
                   <div
                     style={{
                       maxWidth: '70%',
                       padding: '12px',
-                      borderRadius: 'var(--radius-lg)',
-                      background: msg.direction === 'outbound' ? 'var(--accent)' : 'var(--bg3)',
-                      color: msg.direction === 'outbound' ? 'white' : 'var(--text)',
+                      borderRadius: isOutbound ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                      background: bubbleBg,
+                      color: bubbleColor,
+                      border: bubbleBorder,
+                      boxShadow: bubbleShadow,
                       wordWrap: 'break-word',
                       lineHeight: 1.5
                     }}
@@ -694,7 +725,8 @@ export default function SmsPage() {
                     </div>
                   )}
                 </div>
-              ))}
+                )
+              })}
               <div ref={messagesEndRef} />
             </div>
 

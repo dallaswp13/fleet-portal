@@ -27,11 +27,10 @@ interface VerizonAlert {
 
 interface TrendPoint {
   date: string
-  online: number
-  offline: number
-  inactive: number
-  devices: number
-  openIssues: number
+  total: number
+  asc: number
+  cyc: number
+  other: number
 }
 
 /* ── SMS Activity Feed ─────────────────────────────────────── */
@@ -225,74 +224,135 @@ export function FleetTrendChart({ data }: { data: TrendPoint[] }) {
           <h2 style={{ fontSize: 14, fontWeight: 600 }}>Fleet Trends</h2>
         </div>
         <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text3)' }}>
-          <div style={{ fontSize: 13, marginBottom: 6 }}>Collecting trend data...</div>
-          <div style={{ fontSize: 11 }}>Daily snapshots are recorded automatically. Trends will appear after a few days of data.</div>
+          <div style={{ fontSize: 13, marginBottom: 6 }}>No trend data available.</div>
         </div>
       </div>
     )
   }
 
-  const maxVal = Math.max(...data.map(d => d.online + d.offline + d.inactive), 1)
-  const chartH = 160
-  const chartW = Math.max(data.length * 40, 300)
-  const padL = 40, padR = 16, padT = 10, padB = 28
+  const maxVal = Math.max(...data.map(d => d.total), 1)
+  const minVal = Math.min(...data.map(d => Math.min(d.asc, d.cyc, d.other)))
+  // Use a floor that shows meaningful variation
+  const yFloor = Math.max(0, Math.floor(minVal * 0.9 / 50) * 50)
+  const yRange = maxVal - yFloor
+
+  const chartH = 200
+  const chartW = Math.max(data.length * 48, 500)
+  const padL = 48, padR = 16, padT = 14, padB = 32
   const innerW = chartW - padL - padR
   const innerH = chartH - padT - padB
 
   function x(i: number) { return padL + (i / (data.length - 1)) * innerW }
-  function y(val: number) { return padT + innerH - (val / maxVal) * innerH }
+  function y(val: number) { return padT + innerH - ((val - yFloor) / yRange) * innerH }
 
-  function line(values: number[], color: string) {
+  function line(values: number[], color: string, width = 2) {
     const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(' ')
-    return <polyline key={color} points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+    return <polyline key={color} points={pts} fill="none" stroke={color} strokeWidth={width} strokeLinejoin="round" />
   }
 
-  const onlineVals   = data.map(d => d.online)
-  const offlineVals  = data.map(d => d.offline)
-  const issueVals    = data.map(d => d.openIssues)
+  // Shaded area under total line
+  function area(values: number[], color: string) {
+    const pts = values.map((v, i) => `${x(i)},${y(v)}`).join(' ')
+    const bottom = `${x(values.length - 1)},${y(yFloor)} ${x(0)},${y(yFloor)}`
+    return <polygon key={`area-${color}`} points={`${pts} ${bottom}`} fill={color} opacity="0.08" />
+  }
 
-  // Y-axis labels
-  const yTicks = [0, Math.round(maxVal / 2), maxVal]
+  const totalVals = data.map(d => d.total)
+  const ascVals   = data.map(d => d.asc)
+  const cycVals   = data.map(d => d.cyc)
+  const otherVals = data.map(d => d.other)
+
+  const yTicks = [yFloor, Math.round(yFloor + yRange / 3), Math.round(yFloor + yRange * 2 / 3), maxVal]
+
+  // Latest values for the stat summary
+  const latest = data[data.length - 1]
+  const prev   = data[data.length - 2]
+  const totalDelta = latest.total - prev.total
+  const ascDelta   = latest.asc - prev.asc
 
   return (
     <div className="card" style={{ marginTop: 24 }}>
-      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <h2 style={{ fontSize: 14, fontWeight: 600 }}>Fleet Trends</h2>
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Active Vehicle Trends</h2>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>Monthly fleet size · Sep 2024 – Mar 2026</span>
+        </div>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
-            <span style={{ width: 10, height: 3, background: 'var(--green)', borderRadius: 2 }} /> Online
+            <span style={{ width: 12, height: 3, background: 'var(--accent)', borderRadius: 2 }} /> Total
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
-            <span style={{ width: 10, height: 3, background: 'var(--amber)', borderRadius: 2 }} /> Offline
+            <span style={{ width: 12, height: 3, background: 'var(--green)', borderRadius: 2 }} /> ASC
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
-            <span style={{ width: 10, height: 3, background: 'var(--red)', borderRadius: 2 }} /> Open Issues
+            <span style={{ width: 12, height: 3, background: 'var(--amber)', borderRadius: 2 }} /> CYC
+          </span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+            <span style={{ width: 12, height: 3, background: '#8b5cf6', borderRadius: 2 }} /> Other
           </span>
         </div>
       </div>
+
+      {/* Summary stats */}
+      <div style={{ display: 'flex', gap: 24, padding: '12px 20px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Current Total</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--text)' }}>
+            {latest.total.toLocaleString()}
+            <span style={{ fontSize: 11, fontWeight: 500, color: totalDelta >= 0 ? 'var(--green)' : 'var(--red)', marginLeft: 6 }}>
+              {totalDelta >= 0 ? '+' : ''}{totalDelta}
+            </span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>ASC</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--green)' }}>
+            {latest.asc.toLocaleString()}
+            <span style={{ fontSize: 11, fontWeight: 500, marginLeft: 6 }}>
+              {ascDelta >= 0 ? '+' : ''}{ascDelta}
+            </span>
+          </div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>CYC</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--amber)' }}>{latest.cyc.toLocaleString()}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Other</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: '#8b5cf6' }}>{latest.other.toLocaleString()}</div>
+        </div>
+      </div>
+
       <div style={{ padding: '16px 20px', overflowX: 'auto' }}>
         <svg width={chartW} height={chartH} viewBox={`0 0 ${chartW} ${chartH}`}>
           {/* Grid lines */}
           {yTicks.map(t => (
             <g key={t}>
               <line x1={padL} x2={chartW - padR} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeDasharray="3,3" />
-              <text x={padL - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill="var(--text3)">{t}</text>
+              <text x={padL - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill="var(--text3)">{t.toLocaleString()}</text>
             </g>
           ))}
           {/* X-axis date labels */}
           {data.map((d, i) => {
-            // Show every Nth label to avoid crowding
-            const show = data.length <= 14 || i % Math.ceil(data.length / 10) === 0 || i === data.length - 1
+            const show = data.length <= 20 || i % Math.ceil(data.length / 12) === 0 || i === data.length - 1
             return show ? (
-              <text key={i} x={x(i)} y={chartH - 4} textAnchor="middle" fontSize="9" fill="var(--text3)">
-                {new Date(d.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              <text key={i} x={x(i)} y={chartH - 6} textAnchor="middle" fontSize="9" fill="var(--text3)">
+                {new Date(d.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
               </text>
             ) : null
           })}
+          {/* Shaded areas */}
+          {area(totalVals, 'var(--accent)')}
           {/* Lines */}
-          {line(onlineVals, 'var(--green)')}
-          {line(offlineVals, 'var(--amber)')}
-          {line(issueVals, 'var(--red)')}
+          {line(totalVals, 'var(--accent)', 2.5)}
+          {line(ascVals, 'var(--green)', 2)}
+          {line(cycVals, 'var(--amber)', 1.5)}
+          {line(otherVals, '#8b5cf6', 1.5)}
+          {/* Dots on last point */}
+          <circle cx={x(data.length - 1)} cy={y(latest.total)} r="4" fill="var(--accent)" />
+          <circle cx={x(data.length - 1)} cy={y(latest.asc)} r="3.5" fill="var(--green)" />
+          <circle cx={x(data.length - 1)} cy={y(latest.cyc)} r="3" fill="var(--amber)" />
+          <circle cx={x(data.length - 1)} cy={y(latest.other)} r="3" fill="#8b5cf6" />
         </svg>
       </div>
     </div>
