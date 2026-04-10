@@ -12,6 +12,7 @@
   --text3:     #546070;
   --accent:    #3b82f6;
   --accent2:   #2563eb;
+  --accent-dim: rgba(59,130,246,0.1);
   --green:     #2ecc71;
   --green-bg:  rgba(46,204,113,0.1);
   --red:       #e74c3c;
@@ -225,6 +226,7 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
   --text3:     #9ca3af;
   --accent:    #2563eb;
   --accent2:   #1d4ed8;
+  --accent-dim: rgba(37,99,235,0.1);
   --green:     #16a34a;
   --green-bg:  rgba(22,163,74,0.1);
   --red:       #dc2626;
@@ -266,6 +268,59 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
 [data-theme="light"] textarea {
   background: #ffffff;
   border-color: var(--border);
+}
+
+/* Toggle group - segmented control */
+.toggle-group {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.toggle-btn {
+  padding: 6px 14px;
+  border-radius: calc(var(--radius) - 2px);
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.toggle-btn:hover:not(.toggle-active) { background: var(--bg4); color: var(--text); }
+.toggle-btn.toggle-active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+/* Underline tab bar - for page-level navigation */
+.tab-bar { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 24px; gap: 0; }
+.tab-link {
+  padding: 10px 18px;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-block;
+  border-bottom: 2px solid transparent;
+  color: var(--text3);
+  font-weight: 400;
+  text-decoration: none;
+  transition: all 0.15s;
+}
+.tab-link:hover { color: var(--text2); text-decoration: none; }
+.tab-link.tab-active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+/* Filter pill - active state for selects/inputs */
+.filter-active {
+  background: var(--accent-dim, rgba(59,130,246,0.1)) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  font-weight: 600;
 }
 
 /* Stat card link hover (CSS-only, works in Server Components) */

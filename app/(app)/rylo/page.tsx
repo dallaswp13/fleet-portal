@@ -344,11 +344,13 @@ export default function RyloTrackerPage() {
       )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
-        <button className={tab === 'open' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-          onClick={() => setTab('open')}>Open ({openIssues.length})</button>
-        <button className={tab === 'resolved' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-          onClick={() => setTab('resolved')}>Resolved ({resolvedIssues.length})</button>
+      <div style={{ marginBottom: 14 }}>
+        <div className="toggle-group">
+          <button className={`toggle-btn ${tab === 'open' ? 'toggle-active' : ''}`}
+            onClick={() => setTab('open')}>Open ({openIssues.length})</button>
+          <button className={`toggle-btn ${tab === 'resolved' ? 'toggle-active' : ''}`}
+            onClick={() => setTab('resolved')}>Resolved ({resolvedIssues.length})</button>
+        </div>
       </div>
 
       {loading ? (

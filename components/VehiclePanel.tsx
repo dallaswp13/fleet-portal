@@ -271,11 +271,11 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
         </div>
 
         {/* ── Tab bar ──────────────────────────────────────────── */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0, background: 'var(--bg2)', overflowX: 'auto' }}>
+        <div className="tab-bar" style={{ flexShrink: 0, background: 'var(--bg2)', overflowX: 'auto' }}>
           {TABS.map(t => (
             <button key={t.key}
               onClick={() => { setTab(t.key); if (t.key === 'messages') loadSmsLog(); if (t.key === 'driver') loadDriver() }}
-              style={{ padding: '11px 18px', fontSize: 13, fontWeight: tab === t.key ? 600 : 400, color: tab === t.key ? 'var(--accent)' : 'var(--text3)', background: 'none', border: 'none', borderBottom: `2px solid ${tab === t.key ? 'var(--accent)' : 'transparent'}`, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              className={`tab-link ${tab === t.key ? 'tab-active' : ''}`}>
               {t.label}
             </button>
           ))}

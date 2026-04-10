@@ -66,6 +66,11 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
       // For all (default): include only devices that match a vehicle name key
       allowedNameKeys = vehicleNameKeys
     }
+  } else if (filterAssoc === 'unassociated') {
+    // Admin with no fleet filter - get ALL vehicle name keys to exclude
+    const { data: vehs } = await supabase
+      .from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
+    excludeNameKeys = (vehs ?? []).map(v => v.vehicle_name_key)
   }
 
   let query = supabase
@@ -84,8 +89,8 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
       // No vehicles exist, so all devices are unassociated — show all
       // (don't add any exclusion filter)
     } else {
-      // Exclude devices that match any vehicle name key
-      query = query.not('name_key', 'in', `(${excludeNameKeys.map(k => `'${k}'`).join(',')})`)
+      // Exclude devices that match any vehicle name key OR have null name_key
+      query = query.or(`name_key.not.in.(${excludeNameKeys.join(',')}),name_key.is.null`)
     }
   }
 

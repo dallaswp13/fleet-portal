@@ -44,12 +44,7 @@ const FILTER_COLS: Record<string, { label: string; value: string }[]> = {
 }
 
 // Map col key → URL param name
-const SEL = (active: boolean): React.CSSProperties => ({
-  background: active ? 'var(--accent-dim)' : 'var(--bg2)',
-  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  color: active ? 'var(--accent)' : 'var(--text)',
-  fontWeight: active ? 600 : 400,
-})
+const selClass = (active: boolean) => `filter-select${active ? ' filter-active' : ''}`
 
 const COL_TO_PARAM: Record<string, string> = {
   online_status:       'f_status',
@@ -211,7 +206,7 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
                       <th key={col.key} style={{ padding: '3px 8px', background: 'var(--bg3)' }}>
                         {opts && param ? (
                           <select value={current} onChange={e => handleFilter(param, e.target.value)}
-                            style={SEL(!!current)}>
+                            className={selClass(!!current)}>
                             <option value="">All</option>
                             {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>

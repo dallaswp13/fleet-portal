@@ -30,12 +30,7 @@ const ALL_COLS = [
   { key: 'account_number',   label: 'Account #',    defaultVisible: false },
 ]
 
-const SEL = (active: boolean): React.CSSProperties => ({
-  background: active ? 'var(--accent-dim)' : 'var(--bg2)',
-  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  color: active ? 'var(--accent)' : 'var(--text)',
-  fontWeight: active ? 600 : 400,
-})
+const selClass = (active: boolean) => `filter-select${active ? ' filter-active' : ''}`
 
 export default function LinesTable({ lines, page, perPage, totalPages, totalCount, search, sort, dir, activeTab, fRole, fStatus, fVehicle, availableCount, assignedCount }: Props) {
   const [, startTransition] = useTransition()
@@ -113,14 +108,19 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
       {panelError && <div className="alert alert-error" style={{ position: 'fixed', top: 20, right: 20, zIndex: 200 }}>{panelError}</div>}
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-        {(['all','available','staff'] as const).map(t => (
-          <button key={t} className={activeTab === t ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
-            onClick={() => nav({ tab: t, page: '0' })}
-            style={{ marginLeft: t === 'staff' ? 8 : 0 }}>
-            {t === 'all' ? 'All Lines' : t === 'available' ? `Available${availableCount ? ` (${availableCount})` : ''}` : 'Staff'}
-          </button>
-        ))}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+        <div className="toggle-group">
+          {(['all','available'] as const).map(t => (
+            <button key={t} className={`toggle-btn ${activeTab === t ? 'toggle-active' : ''}`}
+              onClick={() => nav({ tab: t, page: '0' })}>
+              {t === 'all' ? 'All Lines' : `Available${availableCount ? ` (${availableCount})` : ''}`}
+            </button>
+          ))}
+        </div>
+        <button className={activeTab === 'staff' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+          onClick={() => nav({ tab: 'staff', page: '0' })}>
+          Staff
+        </button>
       </div>
 
       {activeTab === 'available' && (
@@ -175,20 +175,20 @@ export default function LinesTable({ lines, page, perPage, totalPages, totalCoun
               <tr>{displayCols.map(col => (
                 <th key={col.key} style={{ padding: '3px 6px', background: 'var(--bg3)' }}>
                   {col.key === 'role' ? (
-                    <select value={fRole} onChange={e => nav({ f_role: e.target.value, page: '0' })} style={SEL(!!fRole)}>
+                    <select value={fRole} onChange={e => nav({ f_role: e.target.value, page: '0' })} className={selClass(!!fRole)}>
                       <option value="">All roles</option>
                       <option value="Driver">Driver</option>
                       <option value="PIM">PIM</option>
                       <option value="Unassigned">Unassigned</option>
                     </select>
                   ) : col.key === 'phone_status' ? (
-                    <select value={fStatus} onChange={e => nav({ f_status: e.target.value, page: '0' })} style={SEL(!!fStatus)}>
+                    <select value={fStatus} onChange={e => nav({ f_status: e.target.value, page: '0' })} className={selClass(!!fStatus)}>
                       <option value="">All statuses</option>
                       <option value="active">Active</option>
                       <option value="suspend">Suspended</option>
                     </select>
                   ) : col.key === 'vehicle' ? (
-                    <select value={fVehicle} onChange={e => nav({ f_vehicle: e.target.value, page: '0' })} style={SEL(!!fVehicle)}>
+                    <select value={fVehicle} onChange={e => nav({ f_vehicle: e.target.value, page: '0' })} className={selClass(!!fVehicle)}>
                       <option value="">All</option>
                       <option value="assigned">Assigned</option>
                       <option value="unassigned">Unassigned</option>

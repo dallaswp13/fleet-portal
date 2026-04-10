@@ -34,12 +34,7 @@ function shortOs(s: string | null | undefined) {
   return s ? (s.replace(/^Android\s*/i,'').replace(/\s*\(.*\)/,'').trim() || s) : '—'
 }
 
-const SEL = (active: boolean): React.CSSProperties => ({
-  background: active ? 'var(--accent-dim)' : 'var(--bg2)',
-  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-  color: active ? 'var(--accent)' : 'var(--text)',
-  fontWeight: active ? 600 : 400,
-})
+const selClass = (active: boolean) => `filter-select${active ? ' filter-active' : ''}`
 
 export default function DevicesTable({ devices, page, perPage, totalPages, totalCount, search, sort, dir, fType, fCompliance, fModel, fOs, fPolicy, fAssoc, osValues, policyValues }: Props) {
   const [, startTransition] = useTransition()
@@ -114,7 +109,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
             placeholder="Search device, model, IMEI…" style={{ height: 36 }} />
         </div>
         {activeFilters > 0 && (
-          <button className="btn-secondary btn-sm" style={{ height: 36, fontSize: 11 }}
+          <button className="btn-secondary btn-sm"
             onClick={() => nav({ f_type: '', f_compliance: '', f_model: '', f_os: '', f_policy: '', page: '0' })}>
             Clear {activeFilters} filter{activeFilters > 1 ? 's' : ''}
           </button>
@@ -124,7 +119,7 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
           {[25, 50, 100].map(n => <option key={n} value={n}>{n} / page</option>)}
         </select>
         <ColumnPicker storageKey="devices-cols" allColumns={ALL_COLS} onChange={setVisibleCols} height={36} />
-        <button className="btn-secondary btn-sm" style={{ height: 36, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 5 }}
+        <button className="btn-secondary btn-sm"
           onClick={() => exportToCsv('devices', devices, displayCols.map(c => ({ key: c.key, label: c.label })))}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Export
@@ -132,37 +127,13 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 4, padding: '4px 4px', background: 'var(--bg2)', borderRadius: '4px', border: '1px solid var(--border)' }}>
-          <button
-            onClick={() => nav({ f_assoc: 'all', page: '0' })}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '3px',
-              border: 'none',
-              background: fAssoc === 'all' ? 'var(--accent)' : 'transparent',
-              color: fAssoc === 'all' ? 'white' : 'var(--text)',
-              fontWeight: fAssoc === 'all' ? 600 : 400,
-              fontSize: 12,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
+        <div className="toggle-group">
+          <button className={`toggle-btn ${fAssoc === 'all' ? 'toggle-active' : ''}`}
+            onClick={() => nav({ f_assoc: 'all', page: '0' })}>
             All Devices
           </button>
-          <button
-            onClick={() => nav({ f_assoc: 'unassociated', page: '0' })}
-            style={{
-              padding: '6px 12px',
-              borderRadius: '3px',
-              border: 'none',
-              background: fAssoc === 'unassociated' ? 'var(--accent)' : 'transparent',
-              color: fAssoc === 'unassociated' ? 'white' : 'var(--text)',
-              fontWeight: fAssoc === 'unassociated' ? 600 : 400,
-              fontSize: 12,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
-          >
+          <button className={`toggle-btn ${fAssoc === 'unassociated' ? 'toggle-active' : ''}`}
+            onClick={() => nav({ f_assoc: 'unassociated', page: '0' })}>
             Unassociated
           </button>
         </div>
@@ -182,26 +153,26 @@ export default function DevicesTable({ devices, page, perPage, totalPages, total
               <tr>{displayCols.map(col => (
                 <th key={col.key} style={{ padding: '3px 6px', background: 'var(--bg3)' }}>
                   {col.key === 'is_pim' ? (
-                    <select className="filter-select" value={fType} onChange={e => nav({ f_type: e.target.value, page: '0' })} style={SEL(!!fType)}>
+                    <select value={fType} onChange={e => nav({ f_type: e.target.value, page: '0' })} className={selClass(!!fType)}>
                       <option value="">All types</option>
                       <option value="driver">Driver</option>
                       <option value="pim">PIM</option>
                     </select>
                   ) : col.key === 'compliance_status' ? (
-                    <select className="filter-select" value={fCompliance} onChange={e => nav({ f_compliance: e.target.value, page: '0' })} style={SEL(!!fCompliance)}>
+                    <select value={fCompliance} onChange={e => nav({ f_compliance: e.target.value, page: '0' })} className={selClass(!!fCompliance)}>
                       <option value="">All</option>
                       {COMPLIANCE_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   ) : col.key === 'tablet_model' ? (
-                    <input className="filter-select" value={fModel} onChange={e => nav({ f_model: e.target.value, page: '0' })}
-                      placeholder="Filter model…" style={SEL(!!fModel)} />
+                    <input value={fModel} onChange={e => nav({ f_model: e.target.value, page: '0' })}
+                      placeholder="Filter model…" className={selClass(!!fModel)} />
                   ) : col.key === 'android_os' ? (
-                    <select className="filter-select" value={fOs} onChange={e => nav({ f_os: e.target.value, page: '0' })} style={SEL(!!fOs)}>
+                    <select value={fOs} onChange={e => nav({ f_os: e.target.value, page: '0' })} className={selClass(!!fOs)}>
                       <option value="">All</option>
                       {osValues.map(o => <option key={o} value={o}>{shortOs(o)}</option>)}
                     </select>
                   ) : col.key === 'm360_policy' ? (
-                    <select className="filter-select" value={fPolicy} onChange={e => nav({ f_policy: e.target.value, page: '0' })} style={SEL(!!fPolicy)}>
+                    <select value={fPolicy} onChange={e => nav({ f_policy: e.target.value, page: '0' })} className={selClass(!!fPolicy)}>
                       <option value="">All</option>
                       {policyValues.map(o => <option key={o} value={o}>{o}</option>)}
                     </select>

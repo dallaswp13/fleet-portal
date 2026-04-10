@@ -57,15 +57,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     ] : []),
   ]
 
-  function tabStyle(t: string): React.CSSProperties {
-    return {
-      padding: '10px 18px', cursor: 'pointer', fontSize: 13, display: 'inline-block',
-      borderBottom: tab === t ? '2px solid var(--accent)' : '2px solid transparent',
-      color: tab === t ? 'var(--accent)' : 'var(--text3)',
-      fontWeight: tab === t ? 600 : 400, textDecoration: 'none',
-    }
-  }
-
   return (
     <div className="page-content">
       <div className="page-header">
@@ -73,9 +64,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 24, gap: 0 }}>
+      <div className="tab-bar">
         {tabDef.map(t => (
-          <Link key={t.key} href={`/settings?tab=${t.key}`} style={tabStyle(t.key)}>{t.label}</Link>
+          <Link key={t.key} href={`/settings?tab=${t.key}`} className={`tab-link ${tab === t.key ? 'tab-active' : ''}`}>{t.label}</Link>
         ))}
       </div>
 
