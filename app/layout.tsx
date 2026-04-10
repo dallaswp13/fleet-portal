@@ -8,8 +8,12 @@ export const viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'Fleet Portal',
-  description: 'Taxi fleet management portal',
+  title: 'yellow.taxi',
+  description: 'Fleet management portal — LA Yellow Cab',
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

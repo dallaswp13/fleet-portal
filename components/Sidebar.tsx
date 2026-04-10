@@ -36,8 +36,7 @@ export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isA
       <div className="sidebar-logo">
         <Image src="/logo.png" alt="Logo" width={42} height={42} style={{ borderRadius: 8, flexShrink: 0 }} />
         <div>
-          <span>Fleet Portal</span>
-          <small>Fleet Management</small>
+          <span>yellow.taxi</span>
         </div>
       </div>
 

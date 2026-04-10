@@ -9,15 +9,18 @@ interface QuickAction {
 }
 
 /* ── Actions config ─────────────────────────────────────────── */
-const QUICK_ACTIONS: QuickAction[] = [
-  { id: 'replace_tablet',   icon: '📱', color: 'var(--blue)',   title: 'Replace Driver Tablet', description: 'Wipe the driver tablet and log the replacement.' },
-  { id: 'surrender_vehicle',icon: '🚕', color: 'var(--amber)',  title: 'Surrender Vehicle',     description: 'Wipe both devices, unseat driver, and mark surrendered.' },
-  { id: 'remote_support',   icon: '🛠', color: 'var(--green)',  title: 'Remote Support',        description: 'Initiate a remote support session on a driver tablet.' },
+const WORKING_ACTIONS: QuickAction[] = [
+  { id: 'create_vehicle',    icon: '🆕', color: '#1abc9c',       title: 'Create Vehicle',        description: 'Add a new vehicle record to the database.' },
+  { id: 'get_available_line', icon: '📞', color: '#8e44ad',      title: 'Get Available Line',    description: 'Find an unassigned Verizon line and assign it to a vehicle.' },
+  { id: 'export_data',       icon: '📤', color: '#7f8c8d',       title: 'Export Fleet Data',     description: 'Download all fleet data as an Excel spreadsheet.' },
+  { id: 'new_inbox_rule',    icon: '⚙️', color: '#e67e22',       title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
+]
+
+const M360_ACTIONS: QuickAction[] = [
   { id: 'reboot_tablet',    icon: '🔄', color: '#3498db',       title: 'Reboot Tablet',         description: 'Send a reboot command to a driver or PIM tablet via M360.' },
-  { id: 'create_vehicle',   icon: '🆕', color: '#1abc9c',       title: 'Create Vehicle',        description: 'Add a new vehicle record and check for M360 devices.' },
-  { id: 'get_available_line',icon: '📞', color: '#8e44ad',      title: 'Get Available Line',    description: 'Find an unassigned Verizon line and assign it to a vehicle.' },
-  { id: 'export_data',      icon: '📤', color: '#7f8c8d',       title: 'Export Fleet Data',     description: 'Download all fleet data as CSV with vehicle as primary key.' },
-  { id: 'new_inbox_rule',   icon: '⚙️', color: '#e67e22',       title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
+  { id: 'replace_tablet',   icon: '📱', color: 'var(--blue)',   title: 'Replace Driver Tablet', description: 'Wipe the driver tablet and log the replacement.' },
+  { id: 'surrender_vehicle', icon: '🚕', color: 'var(--amber)', title: 'Surrender Vehicle',     description: 'Wipe both devices, unseat driver, and mark surrendered.' },
+  { id: 'remote_support',   icon: '🛠', color: 'var(--green)',  title: 'Remote Support',        description: 'Initiate a TeamViewer remote support session via M360. Pending API access.' },
 ]
 
 const FLEETS = [
@@ -518,33 +521,18 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
   const [vNum,    setVNum]    = useState('')
   const [fleet,   setFleet]   = useState('')
   const [busy,    setBusy]    = useState(false)
-  const [check,   setCheck]   = useState<{ driver: string | null; pim: string | null } | null>(null)
   const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
-
-  async function findAndCheck() {
-    const num = parseInt(vNum.trim())
-    if (!num || !fleet) return
-    setBusy(true)
-    // Check M360 for existing devices with this vehicle's name pattern
-    const driverName = `${num}${fleet.toLowerCase()}-`
-    const res = await fetch(`/api/maas360/action`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'search_device', deviceName: driverName, vehicleNumber: num }),
-    })
-    // Search may fail if M360 not yet connected — that's fine, we still create the DB record
-    const data = await res.json().catch(() => ({}))
-    setCheck({
-      driver: data.driverDeviceId ?? null,
-      pim: data.pimDeviceId ?? null,
-    })
-    setBusy(false)
-  }
 
   async function create() {
     const num = parseInt(vNum.trim())
     if (!num || !fleet) return
     setBusy(true)
     const sb = createClient()
+
+    // Check if vehicle already exists
+    const { data: existing } = await sb.from('vehicles').select('id').eq('vehicle_number', num).eq('fleet_id', fleet).limit(1).single()
+    if (existing) { setResult({ ok: false, msg: `Vehicle #${num} ${fleet} already exists in the database.` }); setBusy(false); return }
+
     const nameKey = `${num}${fleet}`.toLowerCase()
     const { error } = await sb.from('vehicles').insert({
       vehicle_number: num, fleet_id: fleet,
@@ -556,7 +544,7 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
     const { data: { user } } = await sb.auth.getUser()
     try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'create_vehicle', target_type: 'vehicle', target_id: nameKey, vehicle_number: num, success: true }) } catch { /* non-fatal */ }
     setBusy(false)
-    setResult({ ok: true, msg: `✓ Vehicle #${num} ${fleet} created in database.${check?.driver ? `\nDriver device found in M360: ${check.driver}` : '\nNo M360 device found — import devices after pairing tablets.'}` })
+    setResult({ ok: true, msg: `Vehicle #${num} ${fleet} created.\n\nNext steps: pair tablets and run a device import to link M360 IDs.` })
   }
 
   return (
@@ -574,30 +562,21 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
             ))}
           </div>
         </div>
-      ) : !check ? (
+      ) : (
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Vehicle Number</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <input autoFocus placeholder="e.g. 9999" value={vNum} onChange={e => setVNum(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && findAndCheck()} style={{ flex: 1 }} />
-            <button className="btn-primary btn-sm" onClick={findAndCheck} disabled={busy || !vNum.trim()}
+              onKeyDown={e => e.key === 'Enter' && create()} style={{ flex: 1 }} />
+            <button className="btn-primary btn-sm" onClick={create} disabled={busy || !vNum.trim()}
               style={{ background: action.color, borderColor: action.color }}>
-              {busy ? <Spinner /> : 'Check M360'}
+              {busy ? <Spinner /> : 'Create'}
             </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-            Checks MaaS360 for existing devices matching vehicle {vNum || '?'}{fleet.toLowerCase()}-*
+            Fleet: {fleet} · Creates a new Active Vehicle record in the database.
           </div>
-        </div>
-      ) : (
-        <div>
-          <ConfirmBox rows={[
-            ['Vehicle', `#${vNum} ${fleet}`],
-            ['Driver device in M360', check.driver ?? 'Not found'],
-            ['PIM device in M360', check.pim ?? 'Not found'],
-            ['DB record', 'Will be created as Active Vehicles'],
-          ]} />
-          <ActionButtons busy={busy} onBack={() => setCheck(null)} onConfirm={create} color={action.color} label="Create Vehicle" />
+          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => setFleet('')}>← Change fleet</button>
         </div>
       )}
     </ModalShell>
@@ -736,16 +715,10 @@ export default function ActionsPage() {
     }
   }
 
-  return (
-    <div className="page-content">
-      {renderModal()}
-
-      <div className="page-header">
-        <div><h1>Quick Actions</h1><p>Guided workflows and fleet management tools</p></div>
-      </div>
-
+  function renderActionGrid(actions: QuickAction[]) {
+    return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        {QUICK_ACTIONS.map(action => (
+        {actions.map(action => (
           <button key={action.id}
             onClick={() => action.href ? (window.location.href = action.href) : setActive(action)}
             style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '18px', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s', display: 'flex', flexDirection: 'column', gap: 8 }}
@@ -761,6 +734,28 @@ export default function ActionsPage() {
           </button>
         ))}
       </div>
+    )
+  }
+
+  return (
+    <div className="page-content">
+      {renderModal()}
+
+      <div className="page-header">
+        <div><h1>Quick Actions</h1><p>Guided workflows and fleet management tools</p></div>
+      </div>
+
+      {renderActionGrid(WORKING_ACTIONS)}
+
+      <div style={{ marginTop: 32, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text2)', margin: 0 }}>MaaS360 Device Actions</h2>
+          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--amber-bg, var(--bg4))', color: 'var(--amber, var(--text3))', fontWeight: 600 }}>Pending API Access</span>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0 }}>These actions require MaaS360 API device management permissions. Contact M360 support to enable.</p>
+      </div>
+
+      {renderActionGrid(M360_ACTIONS)}
     </div>
   )
 }
