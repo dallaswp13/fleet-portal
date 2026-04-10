@@ -1,15 +1,8 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 /* ── Types ─────────────────────────────────────────────────── */
-interface Issue {
-  id: string; title: string; body: string | null; status: string
-  priority: string; notes_log: { text: string; ts: string; author: string }[]
-  vehicle_number: number | null
-  created_at: string; resolved_at: string | null
-}
-
 interface QuickAction {
   id: string; icon: string; title: string; description: string; color: string
   href?: string
@@ -20,8 +13,9 @@ const QUICK_ACTIONS: QuickAction[] = [
   { id: 'replace_tablet',   icon: '📱', color: 'var(--blue)',   title: 'Replace Driver Tablet', description: 'Wipe the driver tablet and log the replacement.' },
   { id: 'surrender_vehicle',icon: '🚕', color: 'var(--amber)',  title: 'Surrender Vehicle',     description: 'Wipe both devices, unseat driver, and mark surrendered.' },
   { id: 'remote_support',   icon: '🛠', color: 'var(--green)',  title: 'Remote Support',        description: 'Initiate a remote support session on a driver tablet.' },
-  { id: 'log_issue',        icon: '📋', color: '#9b59b6',       title: 'Log an Issue',          description: 'Add a note to an open issue or create a new one.' },
+  { id: 'reboot_tablet',    icon: '🔄', color: '#3498db',       title: 'Reboot Tablet',         description: 'Send a reboot command to a driver or PIM tablet via M360.' },
   { id: 'create_vehicle',   icon: '🆕', color: '#1abc9c',       title: 'Create Vehicle',        description: 'Add a new vehicle record and check for M360 devices.' },
+  { id: 'get_available_line',icon: '📞', color: '#8e44ad',      title: 'Get Available Line',    description: 'Find an unassigned Verizon line and assign it to a vehicle.' },
   { id: 'export_data',      icon: '📤', color: '#7f8c8d',       title: 'Export Fleet Data',     description: 'Download all fleet data as CSV with vehicle as primary key.' },
   { id: 'new_inbox_rule',   icon: '⚙️', color: '#e67e22',       title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
 ]
@@ -347,70 +341,159 @@ function RemoteSupportModal({ action, onClose }: { action: QuickAction; onClose:
   )
 }
 
-/* ── Log Issue workflow ─────────────────────────────────────── */
-function LogIssueModal({ action, onClose, issues, onIssueUpdate }: { action: QuickAction; onClose: () => void; issues: Issue[]; onIssueUpdate: () => void }) {
-  const [mode,     setMode]     = useState<'pick' | 'new' | 'note'>('pick')
-  const [selected, setSelected] = useState<Issue | null>(null)
-  const [noteText, setNoteText] = useState('')
-  const [newTitle, setNewTitle] = useState('')
-  const [busy,     setBusy]     = useState(false)
-  const [result,   setResult]   = useState<{ ok: boolean; msg: string } | null>(null)
+/* ── Reboot Tablet workflow ─────────────────────────────────── */
+function RebootTabletModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
+  const [vehicle, setVehicle] = useState<Vehicle | null>(null)
+  const [target,  setTarget]  = useState<'driver' | 'pim' | null>(null)
+  const [busy,    setBusy]    = useState(false)
+  const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
 
-  async function addNote() {
-    if (!selected || !noteText.trim()) return
+  async function confirm() {
+    if (!vehicle || !target) return
     setBusy(true)
+    const deviceId = target === 'driver' ? vehicle.m360_device_id : vehicle.pim_m360_device_id
+    if (!deviceId) {
+      setResult({ ok: false, msg: `No M360 device ID for ${target} tablet. Import devices first.` })
+      setBusy(false); return
+    }
+    const r = await m360Action('reboot', deviceId, vehicle.vehicle_number)
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    const entry = { text: noteText.trim(), ts: new Date().toISOString(), author: user?.email ?? 'admin' }
-    const updated = [entry, ...selected.notes_log]
-    await sb.from('issues').update({ notes_log: updated, updated_at: new Date().toISOString() }).eq('id', selected.id)
-    setBusy(false); setResult({ ok: true, msg: `Note added to: "${selected.title}"` }); onIssueUpdate()
+    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'reboot', target_type: 'device', target_id: deviceId, vehicle_number: vehicle.vehicle_number, payload: { target }, success: r.ok }) } catch { /* non-fatal */ }
+    setBusy(false)
+    setResult(r)
   }
 
-  async function createNew() {
-    if (!newTitle.trim()) return
+  return (
+    <ModalShell action={action} onClose={onClose}>
+      {!vehicle ? (
+        <VehicleLookup onFound={setVehicle} color={action.color} />
+      ) : !target ? (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Which tablet?</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button onClick={() => setTarget('driver')}
+              style={{ textAlign: 'left', padding: '12px 14px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Driver Tablet</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{vehicle.device_name ?? 'No device ID'}{vehicle.m360_device_id ? '' : ' — cannot reboot'}</div>
+            </button>
+            <button onClick={() => setTarget('pim')}
+              style={{ textAlign: 'left', padding: '12px 14px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>PIM Tablet</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{vehicle.pim_device_name ?? 'No device ID'}{vehicle.pim_m360_device_id ? '' : ' — cannot reboot'}</div>
+            </button>
+          </div>
+        </div>
+      ) : result ? (
+        <ResultBanner ok={result.ok} msg={result.msg} />
+      ) : (
+        <div>
+          <ConfirmBox rows={[
+            ['Vehicle', `#${vehicle.vehicle_number} ${vehicle.fleet_id.toUpperCase()}`],
+            ['Target', target === 'driver' ? `Driver: ${vehicle.device_name ?? '(unknown)'}` : `PIM: ${vehicle.pim_device_name ?? '(unknown)'}`],
+            ['Action', 'Reboot via MaaS360'],
+          ]} />
+          <ActionButtons busy={busy} onBack={() => setTarget(null)} onConfirm={confirm} color={action.color} label="Send Reboot" />
+        </div>
+      )}
+    </ModalShell>
+  )
+}
+
+/* ── Get Available Line workflow ───────────────────────────── */
+function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
+  const [fleet,     setFleet]     = useState('')
+  const [busy,      setBusy]      = useState(false)
+  const [line,      setLine]      = useState<{ id: string; phone_number: string; mobile_plan: string | null } | null>(null)
+  const [noLines,   setNoLines]   = useState(false)
+  const [assignNum, setAssignNum] = useState('')
+  const [result,    setResult]    = useState<{ ok: boolean; msg: string } | null>(null)
+
+  async function findLine() {
+    if (!fleet) return
     setBusy(true)
     const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    await sb.from('issues').insert({ title: newTitle.trim(), notes_log: [], created_by: user?.email ?? 'admin' })
-    setBusy(false); setResult({ ok: true, msg: `Issue created: "${newTitle.trim()}"` }); onIssueUpdate()
+    // Get all phone norms assigned to vehicles in this fleet
+    const { data: vehicles } = await sb.from('vehicles')
+      .select('driver_phone_norm,pim_phone_norm')
+      .eq('fleet_id', fleet)
+    const assignedNorms = new Set<string>()
+    for (const v of vehicles ?? []) {
+      if (v.driver_phone_norm) assignedNorms.add(v.driver_phone_norm)
+      if (v.pim_phone_norm) assignedNorms.add(v.pim_phone_norm)
+    }
+    // Get lines for this fleet that aren't assigned
+    const { data: lines } = await sb.from('verizon_lines')
+      .select('id,phone_number,phone_norm,mobile_plan')
+      .eq('fleet_id', fleet)
+      .limit(200)
+    const available = (lines ?? []).filter(l => !assignedNorms.has(l.phone_norm ?? ''))
+    setBusy(false)
+    if (available.length === 0) { setNoLines(true); return }
+    setLine(available[0])
+  }
+
+  async function assignLine() {
+    if (!line || !assignNum.trim()) return
+    setBusy(true)
+    const num = parseInt(assignNum.trim())
+    const sb = createClient()
+    const { data: veh } = await sb.from('vehicles').select('id').eq('vehicle_number', num).limit(1).single()
+    if (!veh) { setResult({ ok: false, msg: `Vehicle #${num} not found.` }); setBusy(false); return }
+    // This assigns the phone to the vehicle — user decides driver or PIM
+    // For now just show the line info for manual assignment
+    setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}\n\nAssign this number to vehicle #${num} in the Verizon tab.` })
+    setBusy(false)
   }
 
   return (
     <ModalShell action={action} onClose={onClose}>
       {result ? <ResultBanner ok={result.ok} msg={result.msg} /> :
-      mode === 'pick' ? (
+      !fleet ? (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Select an issue to add a note</div>
-          <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {issues.map(issue => (
-              <button key={issue.id} onClick={() => { setSelected(issue); setMode('note') }}
-                style={{ textAlign: 'left', padding: '10px 12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
-                <div style={{ fontWeight: 600 }}>{issue.title}</div>
-                {issue.notes_log.length > 0 && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{issue.notes_log.length} notes</div>}
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Select Fleet</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {FLEETS.map(f => (
+              <button key={f.value} onClick={() => { setFleet(f.value); }}
+                style={{ padding: '9px 12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
+                {f.label}
               </button>
             ))}
-            {issues.length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)', padding: '8px 0' }}>No open issues.</div>}
           </div>
-          <button className="btn-secondary btn-sm" style={{ marginTop: 10, width: '100%' }} onClick={() => setMode('new')}>
-            + Create New Issue
+        </div>
+      ) : !line && !noLines ? (
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          {busy ? <><span className="spinner" style={{ width: 20, height: 20 }} /><div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 10 }}>Searching for available lines in Fleet {fleet}…</div></> : (
+            <button className="btn-primary" onClick={findLine} style={{ background: action.color, borderColor: action.color }}>Find Available Line</button>
+          )}
+        </div>
+      ) : noLines ? (
+        <div>
+          <ResultBanner ok={false} msg={`No available lines found for Fleet ${fleet}. All lines are assigned.`} />
+          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => { setFleet(''); setNoLines(false) }}>← Try another fleet</button>
+        </div>
+      ) : line ? (
+        <div>
+          <ConfirmBox rows={[
+            ['Fleet', fleet],
+            ['Phone Number', line.phone_number],
+            ['Plan', line.mobile_plan ?? 'Unknown'],
+          ]} />
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, marginTop: 12 }}>Assign to Vehicle (optional)</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input placeholder="Vehicle #" value={assignNum} onChange={e => setAssignNum(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && assignLine()} style={{ flex: 1 }} />
+            <button className="btn-primary btn-sm" onClick={assignLine} disabled={busy || !assignNum.trim()}
+              style={{ background: action.color, borderColor: action.color }}>
+              {busy ? <Spinner /> : 'Assign'}
+            </button>
+          </div>
+          <button className="btn-secondary btn-sm" style={{ marginTop: 8, width: '100%' }}
+            onClick={() => { setResult({ ok: true, msg: `Available line: ${line.phone_number}\nPlan: ${line.mobile_plan ?? 'Unknown'}` }) }}>
+            Just show me the line
           </button>
         </div>
-      ) : mode === 'new' ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>New Issue Title</div>
-          <input autoFocus placeholder="Describe the issue…" value={newTitle} onChange={e => setNewTitle(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && createNew()} style={{ width: '100%', marginBottom: 12 }} />
-          <ActionButtons busy={busy} onBack={() => setMode('pick')} onConfirm={createNew} color={action.color} label="Create Issue" disabled={!newTitle.trim()} />
-        </div>
-      ) : (
-        <div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', marginBottom: 8 }}>{selected?.title}</div>
-          <textarea placeholder="Add a note…" value={noteText} onChange={e => setNoteText(e.target.value)}
-            style={{ width: '100%', minHeight: 80, marginBottom: 12, resize: 'vertical' }} />
-          <ActionButtons busy={busy} onBack={() => setMode('pick')} onConfirm={addNote} color={action.color} label="Add Note" disabled={!noteText.trim()} />
-        </div>
-      )}
+      ) : null}
     </ModalShell>
   )
 }
@@ -619,143 +702,21 @@ function msgs(msg: string) {
   )
 }
 
-/* ── Issue Card ─────────────────────────────────────────────── */
-function IssueCard({ issue, onUpdate }: { issue: Issue; onUpdate: () => void }) {
-  const [expanded,  setExpanded]  = useState(false)
-  const [noteText,  setNoteText]  = useState('')
-  const [vNumEdit,  setVNumEdit]  = useState(String(issue.vehicle_number ?? ''))
-  const [saving,    setSaving]    = useState(false)
-
-  async function addNote() {
-    if (!noteText.trim()) return
-    setSaving(true)
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    const entry = { text: noteText.trim(), ts: new Date().toISOString(), author: user?.email ?? 'admin' }
-    const updatedLog = [entry, ...issue.notes_log]
-    const vNum = vNumEdit ? parseInt(vNumEdit) : null
-
-    // Update issue
-    await sb.from('issues').update({
-      notes_log: updatedLog,
-      vehicle_number: vNum ?? issue.vehicle_number,
-      updated_at: new Date().toISOString()
-    }).eq('id', issue.id)
-
-    // If vehicle number is set, also append note to vehicle's notes field
-    if (vNum) {
-      const { data: veh } = await sb.from('vehicles').select('id,notes').eq('vehicle_number', vNum).limit(1).single()
-      if (veh) {
-        let vNotes: { text: string; ts: string }[] = []
-        try { vNotes = JSON.parse(veh.notes ?? '[]') } catch { vNotes = [] }
-        vNotes.unshift({ text: `[Issue: ${issue.title}] ${noteText.trim()}`, ts: entry.ts })
-        await sb.from('vehicles').update({ notes: JSON.stringify(vNotes), updated_at: new Date().toISOString() }).eq('id', veh.id)
-      }
-    }
-
-    setNoteText(''); setSaving(false); onUpdate()
-  }
-
-  async function resolve() {
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    await sb.from('issues').update({ status: 'resolved', resolved_by: user?.email, resolved_at: new Date().toISOString() }).eq('id', issue.id)
-    onUpdate()
-  }
-
-  const priorityColor = issue.priority === 'high' ? 'var(--red)' : issue.priority === 'low' ? 'var(--text3)' : 'var(--amber)'
-
-  return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 16px', marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <div style={{ width: 8, height: 8, borderRadius: '50%', background: priorityColor, flexShrink: 0, marginTop: 6 }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>{issue.title}</div>
-            {issue.vehicle_number && (
-              <span style={{ fontWeight: 700, fontSize: 12, color: 'var(--accent)' }}>#{issue.vehicle_number}</span>
-            )}
-          </div>
-          {issue.body && <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.4 }}>{issue.body}</div>}
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-            Opened {new Date(issue.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-            {issue.notes_log.length > 0 && ` · ${issue.notes_log.length} note${issue.notes_log.length !== 1 ? 's' : ''}`}
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <button className="btn-secondary btn-sm" onClick={() => setExpanded(e => !e)}>{expanded ? 'Hide' : 'Notes'}</button>
-          <button className="btn-secondary btn-sm" style={{ color: 'var(--green)' }} onClick={resolve}>✓ Resolve</button>
-        </div>
-      </div>
-      {expanded && (
-        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-          {/* Notes log with timestamps */}
-          {issue.notes_log.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              {issue.notes_log.map((n, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
-                  <div style={{ color: 'var(--text3)', whiteSpace: 'nowrap', fontSize: 11, paddingTop: 1, minWidth: 100 }}>
-                    {new Date(n.ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                  </div>
-                  <div style={{ fontSize: 12 }}>
-                    <span style={{ fontSize: 11, color: 'var(--text3)', marginRight: 6 }}>{n.author?.split('@')[0]}</span>
-                    {n.text}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {/* Vehicle # + add note row */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input value={vNumEdit} onChange={e => setVNumEdit(e.target.value)}
-              placeholder="Vehicle #" style={{ width: 90, fontSize: 12, flexShrink: 0 }} />
-            <input value={noteText} onChange={e => setNoteText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addNote()}
-              placeholder="Add a note…" style={{ flex: 1, fontSize: 12 }} />
-            <button className="btn-primary btn-sm" onClick={addNote} disabled={saving || !noteText.trim()}>Add</button>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-            Notes with a vehicle # are also added to that vehicle&apos;s Notes tab.
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 /* ── Main Page ─────────────────────────────────────────────── */
 export default function ActionsPage() {
-  const [active,        setActive]        = useState<QuickAction | null>(null)
-  const [issues,        setIssues]        = useState<Issue[]>([])
-  const [newIssueTitle, setNewIssueTitle] = useState('')
-  const [addingIssue,   setAddingIssue]   = useState(false)
-
-  const loadIssues = useCallback(async () => {
-    const { data } = await createClient().from('issues').select('*').eq('status', 'open').order('created_at')
-    setIssues((data ?? []) as Issue[])
-  }, [])
-
-  useEffect(() => { loadIssues() }, [loadIssues])
-
-  async function addIssue() {
-    if (!newIssueTitle.trim()) return
-    setAddingIssue(true)
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    await sb.from('issues').insert({ title: newIssueTitle.trim(), notes_log: [], created_by: user?.email ?? 'admin' })
-    setNewIssueTitle(''); setAddingIssue(false); loadIssues()
-  }
+  const [active, setActive] = useState<QuickAction | null>(null)
 
   function renderModal() {
     if (!active) return null
     const props = { action: active, onClose: () => setActive(null) }
     switch (active.id) {
-      case 'replace_tablet':    return <ReplaceTabletModal    {...props} />
-      case 'surrender_vehicle': return <SurrenderVehicleModal {...props} />
-      case 'remote_support':    return <RemoteSupportModal    {...props} />
-      case 'log_issue':         return <LogIssueModal         {...props} issues={issues} onIssueUpdate={loadIssues} />
-      case 'create_vehicle':    return <CreateVehicleModal    {...props} />
-      case 'export_data':       return <ExportDataModal       {...props} />
+      case 'replace_tablet':     return <ReplaceTabletModal     {...props} />
+      case 'surrender_vehicle':  return <SurrenderVehicleModal  {...props} />
+      case 'remote_support':     return <RemoteSupportModal     {...props} />
+      case 'reboot_tablet':      return <RebootTabletModal      {...props} />
+      case 'create_vehicle':     return <CreateVehicleModal     {...props} />
+      case 'get_available_line': return <GetAvailableLineModal  {...props} />
+      case 'export_data':        return <ExportDataModal        {...props} />
       default: return null
     }
   }
@@ -768,7 +729,7 @@ export default function ActionsPage() {
         <div><h1>Quick Actions</h1><p>Guided workflows and fleet management tools</p></div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 32 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
         {QUICK_ACTIONS.map(action => (
           <button key={action.id}
             onClick={() => action.href ? (window.location.href = action.href) : setActive(action)}
@@ -785,28 +746,6 @@ export default function ActionsPage() {
           </button>
         ))}
       </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div>
-          <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>Open Issues</h2>
-          <p style={{ fontSize: 12, color: 'var(--text3)' }}>{issues.length} unresolved</p>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        <input value={newIssueTitle} onChange={e => setNewIssueTitle(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && addIssue()}
-          placeholder="Add a new issue…" style={{ flex: 1 }} />
-        <button className="btn-primary btn-sm" onClick={addIssue} disabled={addingIssue || !newIssueTitle.trim()}>
-          {addingIssue ? <Spinner /> : '+ Add'}
-        </button>
-      </div>
-
-      {issues.length === 0 ? (
-        <div className="card" style={{ padding: '24px', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>✓ No open issues.</div>
-      ) : (
-        issues.map(i => <IssueCard key={i.id} issue={i} onUpdate={loadIssues} />)
-      )}
     </div>
   )
 }

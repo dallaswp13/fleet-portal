@@ -171,6 +171,20 @@ function authHeaders(token: string) {
   return { 'Content-Type': 'application/xml', 'Accept': 'application/xml', 'Authorization': `MaaS token=${token}` }
 }
 
+function isTokenExpiredResponse(parsed: Record<string, unknown>): boolean {
+  // M360 returns errorCode 1007 for expired tokens, sometimes nested under authResponse
+  const auth = (parsed?.authResponse ?? parsed) as Record<string, unknown>
+  return auth?.errorCode === 1007 || auth?.errorCode === '1007'
+}
+
+async function invalidateToken(): Promise<void> {
+  _memToken = null
+  try {
+    const svc = createServiceClient()
+    await svc.from('maas360_token').delete().eq('id', 1)
+  } catch { /* ignore */ }
+}
+
 async function m360Fetch(url: string, token: string, method: string, body?: string): Promise<{ ok: boolean; parsed: Record<string, unknown>; rawText: string }> {
   const opts: RequestInit = { method, headers: authHeaders(token) }
   if (body) opts.body = body
@@ -178,6 +192,21 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
   const text = await res.text()
   let parsed: Record<string, unknown> = {}
   try { parsed = parseXml(text) } catch { parsed = { _rawText: text } }
+
+  // Auto-retry on token expiry (errorCode 1007)
+  if (isTokenExpiredResponse(parsed)) {
+    console.warn('[maas360] Token expired (1007) — refreshing and retrying.')
+    await invalidateToken()
+    const freshToken = await getAuthToken()
+    const retryOpts: RequestInit = { method, headers: authHeaders(freshToken) }
+    if (body) retryOpts.body = body
+    const retryRes  = await fetch(url, retryOpts)
+    const retryText = await retryRes.text()
+    let retryParsed: Record<string, unknown> = {}
+    try { retryParsed = parseXml(retryText) } catch { retryParsed = { _rawText: retryText } }
+    return { ok: retryRes.ok, parsed: retryParsed, rawText: retryText }
+  }
+
   return { ok: res.ok, parsed, rawText: text }
 }
 
