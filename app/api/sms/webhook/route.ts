@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
+import { processInboundSms } from '@/lib/smsProcess'
 
 /**
  * Twilio Incoming SMS Webhook
@@ -93,21 +94,43 @@ export async function POST(req: NextRequest) {
     received_at: new Date().toISOString(),
   }
 
-  let { error } = await svc.from('sms_messages').insert(fullRow)
+  let { data: inserted, error } = await svc
+    .from('sms_messages')
+    .insert(fullRow)
+    .select('id')
+    .single()
 
   // If migration 027 isn't applied, strip Twilio-only columns and retry
   if (error && /direction|source|twilio_sid|recipient_phone/i.test(error.message)) {
     console.warn('[twilio-webhook] Twilio schema columns missing — retrying without them. Run migration 027 to enable.')
     const { direction, source, twilio_sid, recipient_phone, ...legacy } = fullRow
-    const retry = await svc.from('sms_messages').insert(legacy)
+    const retry = await svc.from('sms_messages').insert(legacy).select('id').single()
+    inserted = retry.data
     error = retry.error
   }
 
   if (error) {
     // Log but still return OK to Twilio — returning non-200 causes Twilio to retry and queue failures
     console.error('[twilio-webhook] insert failed:', error.message, { fullRow })
-  } else {
-    console.log(`[twilio-webhook] stored inbound message from ${phoneNorm} (media=${numMedia})`)
+    return xmlResponse()
+  }
+
+  console.log(`[twilio-webhook] stored inbound message from ${phoneNorm} (media=${numMedia})`)
+
+  // Run the unified processing pipeline: rule match → auto-reply → row update.
+  // Await it so Twilio sees any response before closing the request — within
+  // Twilio's 15s webhook budget. Errors are logged but never propagated.
+  if (inserted?.id) {
+    try {
+      const result = await processInboundSms(svc, {
+        messageId: inserted.id,
+        smsText: body,
+        senderPhone: phoneNorm,
+      })
+      console.log(`[twilio-webhook] processed:`, result)
+    } catch (err) {
+      console.error('[twilio-webhook] processInboundSms threw:', err)
+    }
   }
 
   return xmlResponse()

@@ -147,7 +147,7 @@ export default function SmsPage() {
   const [messages, setMessages] = useState<SmsMessage[]>([])
   const [rules, setRules] = useState<SmsRule[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(true)
-  const [polling, setPolling] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [pollMsg, setPollMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [showRules, setShowRules] = useState(false)
   const [showNewRule, setShowNewRule] = useState(false)
@@ -172,13 +172,23 @@ export default function SmsPage() {
   const [testResult, setTestResult] = useState<{ ruleId: string; ok: boolean; text: string } | null>(null)
   const [selectedMsgs, setSelectedMsgs] = useState<Set<string>>(new Set())
   const [twilioConfigured, setTwilioConfigured] = useState(true)
-  const [clearing, setClearing] = useState(false)
 
   useEffect(() => {
     loadMessages()
     loadRules()
     const supabase = createClient()
     supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', ['E', 'L', 'S', 'Y', 'U']).order('vehicle_number').then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
+
+    // Supabase Realtime: auto-refresh on any sms_messages change so new
+    // inbound texts and outbound auto-replies appear without a page refresh.
+    const channel = supabase
+      .channel('sms_messages_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sms_messages' }, () => {
+        loadMessages()
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   }, [])
 
   useEffect(() => {
@@ -221,46 +231,14 @@ export default function SmsPage() {
     setRules((data ?? []) as SmsRule[])
   }
 
-  async function clearDemo() {
-    if (!confirm('Delete all demo messages (gmail_id starting with "demo_")? This cannot be undone.')) return
-    setClearing(true)
+  async function refresh() {
+    setRefreshing(true)
     setPollMsg(null)
     try {
-      const supabase = createClient()
-      const { error, count } = await supabase.from('sms_messages').delete({ count: 'exact' }).like('gmail_id', 'demo_%')
-      if (error) {
-        setPollMsg({ ok: false, text: `Clear failed: ${error.message}` })
-      } else {
-        setPollMsg({ ok: true, text: `Cleared ${count ?? 0} demo message(s).` })
-        await loadMessages()
-      }
-    } catch (err) {
-      setPollMsg({ ok: false, text: err instanceof Error ? err.message : 'Network error' })
+      await loadMessages()
+      await loadRules()
     } finally {
-      setClearing(false)
-    }
-  }
-
-  async function runPoll() {
-    setPolling(true)
-    setPollMsg(null)
-    try {
-      const res = await fetch('/api/sms/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      const data = await res.json()
-      if (data.success) {
-        setPollMsg({ ok: true, text: `${data.processed} message(s) processed` })
-        loadMessages()
-      } else {
-        if (res.status === 501) {
-          setPollMsg({ ok: false, text: 'Gmail not configured. Twilio inbound messages arrive via webhook automatically.' })
-        } else {
-          setPollMsg({ ok: false, text: data.error ?? 'Poll failed' })
-        }
-      }
-    } catch {
-      setPollMsg({ ok: false, text: 'Network error' })
-    } finally {
-      setPolling(false)
+      setRefreshing(false)
     }
   }
 
@@ -468,7 +446,7 @@ export default function SmsPage() {
   async function testRule(rule: SmsRule) {
     const ids = selectedMsgs.size > 0 ? Array.from(selectedMsgs) : messages.slice(0, 10).map(m => m.id)
     if (ids.length === 0) {
-      setTestResult({ ruleId: rule.id, ok: false, text: 'No messages to test on. Poll for messages first.' })
+      setTestResult({ ruleId: rule.id, ok: false, text: 'No messages to test on yet.' })
       return
     }
     setTestingRule(rule.id)
@@ -508,7 +486,7 @@ export default function SmsPage() {
     const supabase = createClient()
     const ids = selectedMsgs.size > 0 ? Array.from(selectedMsgs) : messages.map(m => m.id)
     if (!ids.length) return
-    setPolling(true)
+    setRefreshing(true)
     await supabase.from('sms_messages').update({
       vehicle_id: null,
       vehicle_number: null,
@@ -521,7 +499,7 @@ export default function SmsPage() {
     }).in('id', ids)
     await loadMessages()
     setSelectedMsgs(new Set())
-    setPolling(false)
+    setRefreshing(false)
   }
 
   const conversations = getConversations()
@@ -540,14 +518,11 @@ export default function SmsPage() {
         {/* Header with buttons */}
         <div style={{ padding: '12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6, flexDirection: 'column' }}>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn-primary btn-sm" onClick={runPoll} disabled={polling || clearing} style={{ flex: 1, fontSize: 11 }}>
-              {polling ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Polling</> : <>📲 Poll Gmail</>}
-            </button>
-            <button className="btn-secondary btn-sm" onClick={() => setShowRules(r => !r)} style={{ fontSize: 11 }}>
+            <button className="btn-secondary btn-sm" onClick={() => setShowRules(r => !r)} style={{ flex: 1, fontSize: 11 }}>
               ⚙️ Rules
             </button>
-            <button className="btn-secondary btn-sm" onClick={clearDemo} disabled={clearing || polling} style={{ fontSize: 11 }} title="Delete any remaining demo messages">
-              {clearing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🧹 Clear Demo'}
+            <button className="btn-primary btn-sm" onClick={refresh} disabled={refreshing} style={{ flex: 1, fontSize: 11 }}>
+              {refreshing ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Refreshing</> : <>↻ Refresh</>}
             </button>
           </div>
           <input
