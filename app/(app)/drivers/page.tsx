@@ -9,6 +9,7 @@ const PER_PAGE = 60
 interface SearchParams {
   page?: string; q?: string; tab?: string
   offices?: string; asc_fleets?: string
+  has_phone?: string
 }
 
 export default async function DriversPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -16,6 +17,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const page     = Math.max(0, parseInt(params.page ?? '0', 10))
   const search   = params.q?.trim() ?? ''
   const tab      = (params.tab ?? 'active') as 'active' | 'inactive' | 'all'
+  const hasPhone = params.has_phone === '1'
 
   const supabase = await createClient()
 
@@ -41,6 +43,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     if (activeFilter !== undefined) q = q.eq('active', activeFilter)
     if (fleetIds !== null && fleetIds.length > 0) q = q.in('fleet_id', fleetIds)
     else if (fleetIds !== null && fleetIds.length === 0) q = q.eq('fleet_id', '___NONE___')
+    if (hasPhone) q = q.not('personal_phone_norm', 'is', null).neq('personal_phone_norm', '')
     if (search) {
       const like = `%${search}%`
       q = q.or(`name.ilike.${like},email.ilike.${like},driver_id::text.ilike.${like},personal_phone.ilike.${like},drivers_license.ilike.${like}`)
@@ -81,6 +84,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           activeCount={activeCount ?? 0}
           inactiveCount={inactiveCount ?? 0}
           allCount={allCount ?? 0}
+          hasPhone={hasPhone}
         />
       </Suspense>
     </div>

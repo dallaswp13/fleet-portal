@@ -16,7 +16,8 @@ const mainNav = [
 ]
 
 const settingsNav = [
-  { href: '/settings',  label: 'Settings',  icon: '⚙️' },
+  { href: '/data-audit', label: 'Data Audit', icon: '🔍' },
+  { href: '/settings',   label: 'Settings',   icon: '⚙️' },
 ]
 
 export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isAdmin: boolean }) {

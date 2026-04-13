@@ -7,6 +7,19 @@ interface TwilioDetail {
   auth: boolean
   sender: boolean
   senderType: 'messaging_service' | 'phone_number' | 'none'
+  phone?: string | null
+}
+
+function formatPhone(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const d = raw.replace(/\D/g, '')
+  if (d.length === 11 && d[0] === '1') {
+    return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`
+  }
+  if (d.length === 10) {
+    return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`
+  }
+  return raw
 }
 
 export default function TwilioStatusIndicator() {
@@ -35,13 +48,15 @@ export default function TwilioStatusIndicator() {
     detail?.senderType === 'phone_number'      ? 'Phone Number' :
     'Not set'
 
+  const prettyPhone = formatPhone(detail?.phone)
+
   return (
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
       <button
         onClick={() => setShowTip(v => !v)}
         className="btn-icon"
-        style={{ height: 32, padding: '0 10px', gap: 6, fontSize: 12, color: 'var(--text3)', width: 'auto', display: 'flex', alignItems: 'center' }}
-        title={`Twilio SMS: ${label[status]}`}>
+        style={{ height: 32, padding: '0 10px', gap: 8, fontSize: 12, color: 'var(--text3)', width: 'auto', display: 'flex', alignItems: 'center' }}
+        title={`Twilio SMS: ${label[status]}${prettyPhone ? ` — ${prettyPhone}` : ''}`}>
         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>SMS</span>
         <span style={{
           width: 7, height: 7, borderRadius: '50%',
@@ -49,6 +64,14 @@ export default function TwilioStatusIndicator() {
           boxShadow: status === 'ok' ? `0 0 0 2px color-mix(in srgb, var(--green) 20%, transparent)` : undefined,
           flexShrink: 0,
         }} />
+        {prettyPhone && (
+          <span style={{
+            fontSize: 11, fontFamily: 'var(--font-mono)', fontWeight: 600,
+            color: 'var(--text)', letterSpacing: '-0.02em',
+          }}>
+            {prettyPhone}
+          </span>
+        )}
       </button>
 
       {showTip && (

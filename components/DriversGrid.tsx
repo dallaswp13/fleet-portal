@@ -24,9 +24,10 @@ interface Props {
   page: number; totalPages: number; totalCount: number
   search: string; activeTab: 'active' | 'inactive' | 'all'
   activeCount: number; inactiveCount: number; allCount: number
+  hasPhone: boolean
 }
 
-export default function DriversGrid({ drivers: rawDrivers, page, totalPages, totalCount, search, activeTab, activeCount, inactiveCount, allCount }: Props) {
+export default function DriversGrid({ drivers: rawDrivers, page, totalPages, totalCount, search, activeTab, activeCount, inactiveCount, allCount, hasPhone }: Props) {
   const router    = useRouter()
   const pathname  = usePathname()
   const [, startTransition] = useTransition()
@@ -199,13 +200,21 @@ export default function DriversGrid({ drivers: rawDrivers, page, totalPages, tot
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className={activeTab === 'active'   ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
           onClick={() => nav({ tab: 'active', page: '0' })}>Active ({activeCount})</button>
         <button className={activeTab === 'inactive' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
           onClick={() => nav({ tab: 'inactive', page: '0' })}>Inactive ({inactiveCount})</button>
         <button className={activeTab === 'all'      ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
           onClick={() => nav({ tab: 'all', page: '0' })}>All ({allCount})</button>
+        <div style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px' }} />
+        <button
+          className={hasPhone ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+          onClick={() => nav({ has_phone: hasPhone ? '' : '1', page: '0' })}
+          title="Show only drivers who have a personal phone number on file"
+        >
+          📱 Has phone {hasPhone ? '✓' : ''}
+        </button>
       </div>
 
       {/* Search */}

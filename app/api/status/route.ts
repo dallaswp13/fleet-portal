@@ -20,6 +20,14 @@ export async function GET() {
   const hasTwilioSender = !!(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_PHONE_NUMBER)
   const twilio = hasTwilioAuth && hasTwilioSender
 
+  // Phone number shown in the top bar so Dallas doesn't forget it. For
+  // Messaging Service setups (which may route across a pool) we prefer an
+  // explicit display number if set; otherwise fall back to TWILIO_PHONE_NUMBER.
+  const twilioPhone =
+    process.env.TWILIO_DISPLAY_NUMBER ||
+    process.env.TWILIO_PHONE_NUMBER ||
+    null
+
   return NextResponse.json({
     claude,
     m360,
@@ -28,6 +36,7 @@ export async function GET() {
       auth: hasTwilioAuth,
       sender: hasTwilioSender,
       senderType: process.env.TWILIO_MESSAGING_SERVICE_SID ? 'messaging_service' : (process.env.TWILIO_PHONE_NUMBER ? 'phone_number' : 'none'),
+      phone: twilioPhone,
     },
   })
 }

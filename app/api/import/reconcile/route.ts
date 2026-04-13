@@ -50,17 +50,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 400 })
   }
 
-  // Pull existing DB state (vehicle_number, fleet_id, sheet_tab only)
-  // Note: vehicles table can be ~1500+ rows; well within a single query.
-  const { data: dbRows, error: dbErr } = await svc
-    .from('vehicles')
-    .select('vehicle_number, fleet_id, sheet_tab')
-  if (dbErr) return NextResponse.json({ error: `DB read failed: ${dbErr.message}` }, { status: 500 })
-
+  // Pull existing DB state (vehicle_number, fleet_id, sheet_tab only).
+  // Supabase's REST layer caps any single SELECT at 1000 rows regardless of
+  // .select() — paginate with .range() until we've exhausted the table.
   type DbRow = { vehicle_number: number; fleet_id: string; sheet_tab: string | null }
   const dbMap = new Map<string, DbRow>()
-  for (const r of (dbRows ?? []) as DbRow[]) {
-    dbMap.set(`${r.vehicle_number}|${r.fleet_id}`, r)
+  const PAGE = 1000
+  for (let start = 0; ; start += PAGE) {
+    const { data: dbRows, error: dbErr } = await svc
+      .from('vehicles')
+      .select('vehicle_number, fleet_id, sheet_tab')
+      .range(start, start + PAGE - 1)
+    if (dbErr) return NextResponse.json({ error: `DB read failed: ${dbErr.message}` }, { status: 500 })
+    const batch = (dbRows ?? []) as DbRow[]
+    for (const r of batch) dbMap.set(`${r.vehicle_number}|${r.fleet_id}`, r)
+    if (batch.length < PAGE) break
+    // Safety stop in case something is catastrophically wrong — no fleet has 50k+ vehicles
+    if (start > 50_000) break
   }
 
   const ccsiMap = new Map<string, typeof ccsiRecords[number]>()
