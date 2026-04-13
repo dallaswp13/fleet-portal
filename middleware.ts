@@ -24,8 +24,19 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
+
+  // Public webhooks and cron endpoints — no auth required.
+  // Third-party callers (Twilio, Vercel Cron) cannot carry Supabase cookies.
+  const PUBLIC_API_PREFIXES = [
+    '/api/sms/webhook',   // Twilio inbound SMS
+    '/api/maas360/keepalive', // M360 token keepalive cron
+  ]
+  if (PUBLIC_API_PREFIXES.some(p => pathname.startsWith(p))) {
+    return supabaseResponse
+  }
+
+  const { data: { user } } = await supabase.auth.getUser()
 
   if (pathname.startsWith('/login') || pathname.startsWith('/auth') || pathname.startsWith('/set-password')) {
     if (user && pathname === '/login') {
