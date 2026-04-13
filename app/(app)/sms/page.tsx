@@ -223,7 +223,8 @@ export default function SmsPage() {
       const res = await fetch('/api/sms/seed-demo', { method: 'POST' })
       const data = await res.json()
       if (data.success) {
-        setPollMsg({ ok: true, text: `Demo loaded: ${data.inserted} messages across 8 conversations` })
+        const warn = data.schema && String(data.schema).startsWith('legacy') ? ' ⚠️ Migration 027 not applied — outbound messages will appear as inbound. Run 027_twilio_sms.sql in Supabase SQL editor.' : ''
+        setPollMsg({ ok: true, text: `Demo loaded: ${data.inserted} messages (${data.outbound ?? 0} outbound) across 8 conversations.${warn}` })
         await loadMessages()
       } else {
         setPollMsg({ ok: false, text: data.error ?? 'Failed to load demo' })

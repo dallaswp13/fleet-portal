@@ -782,22 +782,32 @@ export async function POST(req: NextRequest) {
 
     // Insert all messages — try with Twilio columns first, fall back without them
     let { error } = await service.from('sms_messages').insert(messages)
+    let usedFallback = false
 
-    if (error && error.message.includes('direction')) {
+    // Detect "unknown column" errors from PostgREST for any of the Twilio-added fields
+    const isSchemaMissingError = (msg: string) =>
+      /direction|recipient_phone|twilio_sid|source/i.test(msg) &&
+      /(column|schema cache|does not exist|could not find)/i.test(msg)
+
+    if (error && isSchemaMissingError(error.message)) {
       // Migration 027 not applied yet — strip Twilio-specific columns and retry
       const fallbackMessages = messages.map(({ direction, source, twilio_sid, recipient_phone, ...rest }) => rest)
       const retry = await service.from('sms_messages').insert(fallbackMessages)
       error = retry.error
+      usedFallback = true
     }
 
     if (error) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 })
     }
 
+    const outboundCount = messages.filter(m => m.direction === 'outbound').length
     return NextResponse.json({
       success: true,
       inserted: messages.length,
-      message: `Seeded ${messages.length} demo SMS messages across 8 conversations`,
+      outbound: outboundCount,
+      schema: usedFallback ? 'legacy (migration 027 not applied — outbound messages will render as inbound; run migrations 027 to enable Twilio columns)' : 'twilio',
+      message: `Seeded ${messages.length} demo SMS messages (${outboundCount} outbound) across 8 conversations`,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error'

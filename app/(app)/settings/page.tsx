@@ -148,41 +148,108 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {([
+              // ── ACTIVE / IN FLIGHT ────────────────────────────────────────
               {
-                status: 'done', label: 'MaaS360 API Integration',
-                detail: 'Connected via XML transport. Reboot, kiosk, wipe, clear app data, and support actions all operational. Token cached in Supabase with auto-refresh.',
+                status: 'blocked', label: 'MaaS360 API — Command Execution',
+                detail: 'Authentication is working (token auth + keepalive stable). Device action commands (reboot, wipe, kiosk, clear app data) are returning errors from M360. Needs troubleshooting — likely an endpoint or XML payload format issue. Search and device lookup work; sendAction is the blocker.',
+              },
+              {
+                status: 'todo', label: 'Twilio SMS — Outbound Replies',
+                detail: 'Inbound via Gmail/Google Voice is working. Need to wire /api/sms/send to Twilio REST API for outbound replies from the Inbox, plus webhook endpoint for direct Twilio inbound. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER in Vercel. Run migration 027 in Supabase first.',
+              },
+              {
+                status: 'todo', label: 'Create Vehicle — M360 User Provisioning',
+                detail: 'Quick Action to provision a new cab: prompts for cab number + fleet, then creates two M360 users via API — driver (front group) and *pim (pim group). Depends on M360 command execution being unblocked.',
+              },
+              {
+                status: 'todo', label: 'Invite Users',
+                detail: 'Admin flow to invite teammates by email — sends Supabase magic-link invite, pre-assigns role (admin/viewer) and office scope. Replaces manual DB row creation in Manage Users.',
+              },
+              {
+                status: 'todo', label: 'Scheduled Maintenance Reminders',
+                detail: 'Auto-flag vehicles overdue for service based on last-service date and mileage. Surface as a Dashboard widget and daily digest email.',
+              },
+              {
+                status: 'todo', label: 'Automated Data Sync',
+                detail: 'Replace the four manual CSV/XLSX uploads (Fleet, Devices, Verizon, Drivers) with scheduled pulls directly from MaaS360, Verizon, and CCSI. Removes the weekly upload chore.',
+              },
+              {
+                status: 'todo', label: 'Driver Lookup by Phone',
+                detail: 'When an SMS arrives from an unknown phone, attempt auto-match against the Drivers table (normalized phone). Pre-fills sender name and vehicle in the Inbox.',
+              },
+              {
+                status: 'todo', label: 'Bulk Actions',
+                detail: 'Multi-select on Vehicles and Devices pages with bulk reboot, bulk kiosk toggle, bulk export. Useful for end-of-shift or fleet-wide operations.',
+              },
+              {
+                status: 'todo', label: 'Issue Tracker — Full Page',
+                detail: 'Dashboard summary widget exists. Build out dedicated /issues page with create/edit/assign/resolve, filtering by priority and office, and linking to vehicles.',
+              },
+              {
+                status: 'todo', label: 'Daily Snapshot Job',
+                detail: 'Populate daily_snapshots table (migration 028) via a cron at /api/cron/snapshot so the Fleet Trend chart shows live data instead of hardcoded Active Vehicle Tracker values.',
+              },
+
+              // ── RECENTLY COMPLETED ────────────────────────────────────────
+              {
+                status: 'done', label: 'Gmail OAuth — Connected',
+                detail: 'GMAIL_CREDENTIALS set in Vercel. Poll Now pulls real driver SMS messages from Google Voice. Inbox showing live + demo messages.',
+              },
+              {
+                status: 'done', label: 'Available Lines — DB-Side Filtering',
+                detail: 'Migration 025 applied. Available tab uses RPC for accurate counts on large datasets.',
+              },
+              {
+                status: 'done', label: 'Dashboard Widgets',
+                detail: 'SMS Activity Feed, Issue Tracker Summary, Verizon Usage Alerts, and Fleet Size Trend chart all live on the home dashboard.',
+              },
+              {
+                status: 'done', label: 'Top Bar Status Indicators',
+                detail: 'Twilio SMS and MaaS360 API status dots live in the top bar with click-to-expand tooltips and recheck. Claude button simplified to Anthropic-only.',
+              },
+              {
+                status: 'done', label: 'Unassociated Devices View',
+                detail: 'Migration 029 added a NOT EXISTS view to handle 2000+ unassociated devices without hitting PostgREST URL length limits.',
+              },
+              {
+                status: 'done', label: 'SMS Inbox — Two-Way Chat UI',
+                detail: 'iMessage-style bubbles, outbound on the right, auto-reply teal gradient. Conversations grouped by phone with sender labels.',
+              },
+              {
+                status: 'done', label: 'SMS Translation',
+                detail: 'Non-English messages translated via Claude API at poll time (Spanish, Russian, Armenian, Farsi). Original + translation shown side-by-side in Inbox.',
               },
               {
                 status: 'done', label: 'SMS Inbox — Commit & Execute',
-                detail: 'Messages are parsed for intent and vehicle. Execute button sends M360 commands directly. Destructive actions and low-confidence messages require confirmation. Messages grouped by sender.',
+                detail: 'Messages parsed for intent and vehicle. Execute button fires M360 commands directly. Destructive actions require confirmation.',
               },
               {
-                status: 'blocked', label: 'Gmail OAuth',
-                detail: 'GMAIL_CREDENTIALS env var must be set in Vercel with a base64-encoded Google OAuth client secret. Once connected, Poll Now will pull real driver SMS messages.',
-              },
-              {
-                status: 'done', label: 'Driver Photos',
-                detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS. Re-import CCSI-drivers.xlsx to refresh URLs.',
+                status: 'done', label: 'MaaS360 Auth + XML Transport',
+                detail: 'Auth working via XML transport with token cached in Supabase. Keepalive cron runs every 30 min to prevent 60-min token expiry.',
               },
               {
                 status: 'done', label: 'Quick Actions — Full Workflows',
-                detail: 'Replace Tablet (wipe + log), Surrender Vehicle (wipe both + unseat + mark), and Remote Support (reboot + clear dispatch + clear BT) all wired to M360 API.',
+                detail: 'Replace Tablet (wipe + log), Surrender Vehicle (wipe both + unseat + mark), Remote Support (reboot + clear dispatch + clear BT) all wired.',
               },
               {
                 status: 'done', label: 'Sitewide Filters (Office / Fleet)',
-                detail: 'Office and ASC sub-fleet filters are applied server-side across Vehicles, Devices, Verizon, and Drivers pages.',
-              },
-              {
-                status: 'done', label: 'Verizon Lines — Vehicle Association',
-                detail: 'Phone norm matching fixed. PIM and Driver phone filters now run in the database so counts and pagination are accurate.',
-              },
-              {
-                status: 'todo', label: 'Available Lines — Enhanced Filtering',
-                detail: 'Run migration 025 in Supabase SQL editor to enable DB-side available line filtering. Without it, the Available tab may show incorrect results for large datasets.',
+                detail: 'Office and ASC sub-fleet filters applied server-side across Vehicles, Devices, Verizon, Drivers.',
               },
               {
                 status: 'done', label: 'Server-Side Pagination & Filtering',
-                detail: 'Vehicles, Devices, Verizon, and Drivers all filter and paginate in the database. Count and page numbers are always accurate.',
+                detail: 'Vehicles, Devices, Verizon, Drivers all filter and paginate in the database with accurate counts.',
+              },
+              {
+                status: 'done', label: 'Verizon Lines — Vehicle Association',
+                detail: 'Phone-norm matching fixed. PIM and Driver phone filters run in the database.',
+              },
+              {
+                status: 'done', label: 'Driver Photos',
+                detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS issues.',
+              },
+              {
+                status: 'done', label: 'Export Data — Persistent Preferences',
+                detail: 'Export Data panel remembers column selections and filters between sessions via localStorage.',
               },
             ] as { status: string; label: string; detail: string }[]).map((item, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', borderLeft: `3px solid ${item.status === 'done' ? 'var(--green)' : item.status === 'blocked' ? 'var(--red)' : 'var(--amber)'}` }}>

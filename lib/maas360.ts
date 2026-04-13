@@ -315,6 +315,73 @@ export async function searchDeviceByName(deviceName: string): Promise<{ deviceId
   return { deviceId: (list[0]?.maas360DeviceID as string) ?? null, found: list }
 }
 
+/* ── User provisioning ────────────────────────────────────────────────── */
+
+/**
+ * Create a MaaS360 user (local domain) and optionally assign to a user group.
+ * Used by the Create Vehicle quick action to provision driver + PIM accounts.
+ *
+ * Endpoints (HCL MaaS360 User APIs):
+ *   POST /user-apis/user/1.0/addUser/customer/{billingID}
+ *   POST /user-apis/user/1.0/addUserToGroup/customer/{billingID}
+ *
+ * NOTE: These endpoints require M360 user-management permissions on the API
+ * application. If disabled, callers will receive a non-OK response with the
+ * raw XML error payload. This is expected until API access is provisioned.
+ */
+export async function createM360User(params: {
+  userName: string
+  domain?: string
+  emailAddress?: string
+  firstName?: string
+  lastName?: string
+}): Promise<{ success: boolean; raw: unknown }> {
+  const { BASE_URL, BILLING_ID } = cfg()
+  const token = await getAuthToken()
+
+  const userName    = params.userName
+  const domain      = params.domain ?? 'local'
+  const email       = params.emailAddress ?? `${userName}@layellowcab.local`
+  const firstName   = params.firstName ?? userName
+  const lastName    = params.lastName  ?? 'Driver'
+
+  const xmlBody = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<user>',
+    `  <userName>${escapeXml(userName)}</userName>`,
+    `  <domain>${escapeXml(domain)}</domain>`,
+    `  <emailAddress>${escapeXml(email)}</emailAddress>`,
+    `  <firstName>${escapeXml(firstName)}</firstName>`,
+    `  <lastName>${escapeXml(lastName)}</lastName>`,
+    '</user>',
+  ].join('\n')
+
+  const { ok, parsed } = await m360Fetch(
+    `${BASE_URL}/user-apis/user/1.0/addUser/customer/${BILLING_ID}`,
+    token, 'POST', xmlBody
+  )
+  return { success: ok, raw: parsed }
+}
+
+export async function addUserToM360Group(userName: string, groupName: string): Promise<{ success: boolean; raw: unknown }> {
+  const { BASE_URL, BILLING_ID } = cfg()
+  const token = await getAuthToken()
+
+  const xmlBody = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<userGroupAssociation>',
+    `  <userName>${escapeXml(userName)}</userName>`,
+    `  <userGroupName>${escapeXml(groupName)}</userGroupName>`,
+    '</userGroupAssociation>',
+  ].join('\n')
+
+  const { ok, parsed } = await m360Fetch(
+    `${BASE_URL}/user-apis/user/1.0/addUserToGroup/customer/${BILLING_ID}`,
+    token, 'POST', xmlBody
+  )
+  return { success: ok, raw: parsed }
+}
+
 /* ── Auth test ────────────────────────────────────────────────────────── */
 
 export async function testAuth(): Promise<{ ok: boolean; message: string; credentials: Record<string, string>; debug?: string }> {

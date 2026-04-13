@@ -521,12 +521,14 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
   const [vNum,    setVNum]    = useState('')
   const [fleet,   setFleet]   = useState('')
   const [busy,    setBusy]    = useState(false)
-  const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
+  const [stepLog, setStepLog] = useState<string[]>([])
+  const [result,  setResult]  = useState<{ ok: boolean; msg: string; steps?: { step: string; success: boolean; detail: string }[] } | null>(null)
 
   async function create() {
     const num = parseInt(vNum.trim())
     if (!num || !fleet) return
     setBusy(true)
+    setStepLog([`Creating vehicle #${num}${fleet}…`])
     const sb = createClient()
 
     // Check if vehicle already exists
@@ -540,16 +542,72 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
       sheet_tab: 'Active Vehicles',
       updated_at: new Date().toISOString()
     })
-    if (error) { setResult({ ok: false, msg: error.message }); setBusy(false); return }
+    if (error) { setResult({ ok: false, msg: `DB insert failed: ${error.message}` }); setBusy(false); return }
+
+    setStepLog(prev => [...prev, `✓ Vehicle row created (${num}${fleet})`, `Provisioning MaaS360 users…`])
+
     const { data: { user } } = await sb.auth.getUser()
     try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'create_vehicle', target_type: 'vehicle', target_id: nameKey, vehicle_number: num, success: true }) } catch { /* non-fatal */ }
+
+    // Provision two M360 users (driver + PIM) and assign to groups
+    let m360Ok = false
+    let m360Steps: { step: string; success: boolean; detail: string }[] = []
+    let m360Msg = ''
+    try {
+      const res = await fetch('/api/maas360/create-vehicle-users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicleNumber: num, fleetId: fleet })
+      })
+      const data = await res.json()
+      m360Ok = data.success ?? false
+      m360Steps = data.steps ?? []
+      m360Msg = data.message ?? (data.error ?? 'No response')
+    } catch (err) {
+      m360Msg = err instanceof Error ? err.message : 'Network error calling MaaS360'
+    }
+
     setBusy(false)
-    setResult({ ok: true, msg: `Vehicle #${num} ${fleet} created.\n\nNext steps: pair tablets and run a device import to link M360 IDs.` })
+    const summary = [
+      `✅ Vehicle #${num}${fleet} created in database.`,
+      m360Ok
+        ? `✅ MaaS360: ${m360Msg}`
+        : `⚠️ MaaS360: ${m360Msg}`,
+      '',
+      `Driver user: ${num}${fleet} → "${fleet} front" group`,
+      `PIM user:    *${num}${fleet} → "${fleet} pim" group`,
+    ].join('\n')
+    setResult({ ok: true, msg: summary, steps: m360Steps })
+  }
+
+  function reset() {
+    setResult(null); setStepLog([]); setVNum(''); setFleet('')
   }
 
   return (
     <ModalShell action={action} onClose={onClose}>
-      {result ? <ResultBanner ok={result.ok} msg={result.msg} /> :
+      {result ? (
+        <div>
+          <ResultBanner ok={result.ok} msg={result.msg} />
+          {result.steps && result.steps.length > 0 && (
+            <div style={{ marginTop: 12, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 6 }}>M360 Provisioning Steps</div>
+              {result.steps.map((s, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, fontSize: 11, padding: '3px 0', alignItems: 'flex-start' }}>
+                  <span style={{ color: s.success ? 'var(--green)' : 'var(--red)', flexShrink: 0, width: 14 }}>{s.success ? '✓' : '✗'}</span>
+                  <span style={{ flex: 1 }}>
+                    <div style={{ color: 'var(--text)' }}>{s.step}</div>
+                    {s.detail && <div style={{ color: 'var(--text3)', fontSize: 10, marginTop: 2, wordBreak: 'break-word' }}>{s.detail}</div>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="btn-secondary" onClick={reset}>Add another</button>
+            <button className="btn-primary" onClick={onClose} style={{ background: action.color, borderColor: action.color }}>Done</button>
+          </div>
+        </div>
+      ) :
       !fleet ? (
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Select Fleet</div>
@@ -561,22 +619,38 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
               </button>
             ))}
           </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, lineHeight: 1.5 }}>
+            Creating a vehicle will also provision two MaaS360 users:<br />
+            • Driver — username <code>#{`{vehicle#}${'{fleet}'}`}</code> in <code>{'{fleet}'} front</code> group<br />
+            • PIM — username <code>*{`{vehicle#}${'{fleet}'}`}</code> in <code>{'{fleet}'} pim</code> group
+          </div>
         </div>
       ) : (
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Vehicle Number</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <input autoFocus placeholder="e.g. 9999" value={vNum} onChange={e => setVNum(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && create()} style={{ flex: 1 }} />
+              onKeyDown={e => e.key === 'Enter' && !busy && create()} style={{ flex: 1 }} />
             <button className="btn-primary btn-sm" onClick={create} disabled={busy || !vNum.trim()}
               style={{ background: action.color, borderColor: action.color }}>
               {busy ? <Spinner /> : 'Create'}
             </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-            Fleet: {fleet} · Creates a new Active Vehicle record in the database.
+            Fleet: {fleet} · Creates vehicle row + driver/PIM users in MaaS360.
           </div>
-          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => setFleet('')}>← Change fleet</button>
+          {vNum.trim() && (
+            <div style={{ marginTop: 10, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '8px 10px', fontSize: 11, color: 'var(--text2)' }}>
+              <div>Driver user: <code>{vNum.trim()}{fleet}</code> → <code>{fleet} front</code></div>
+              <div>PIM user: <code>*{vNum.trim()}{fleet}</code> → <code>{fleet} pim</code></div>
+            </div>
+          )}
+          {busy && stepLog.length > 0 && (
+            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
+              {stepLog.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+          )}
+          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => setFleet('')} disabled={busy}>← Change fleet</button>
         </div>
       )}
     </ModalShell>

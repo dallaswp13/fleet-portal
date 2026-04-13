@@ -3,16 +3,16 @@ import { useState, useEffect } from 'react'
 
 export default function ClaudeSupportToggle() {
   const [showTooltip, setShowTooltip] = useState(false)
-  const [status, setStatus] = useState<{ claude: boolean; m360: boolean; twilio: boolean; checking: boolean }>({ claude: false, m360: false, twilio: false, checking: true })
+  const [status, setStatus] = useState<{ claude: boolean; checking: boolean }>({ claude: false, checking: true })
 
   useEffect(() => {
     fetch('/api/status')
       .then(r => r.json())
-      .then(d => setStatus({ claude: d.claude ?? false, m360: d.m360 ?? false, twilio: d.twilio ?? false, checking: false }))
-      .catch(() => setStatus({ claude: false, m360: false, twilio: false, checking: false }))
+      .then(d => setStatus({ claude: d.claude ?? false, checking: false }))
+      .catch(() => setStatus({ claude: false, checking: false }))
   }, [])
 
-  const isOn = status.claude && status.m360
+  const isOn = status.claude
 
   return (
     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
@@ -40,29 +40,18 @@ export default function ClaudeSupportToggle() {
           boxShadow: 'var(--shadow-lg)', zIndex: 200,
         }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Claude Support Status</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.claude ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
-              <span>Anthropic API: {status.claude ? 'Connected' : 'Not configured'}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.twilio ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
-              <span>Twilio SMS: {status.twilio ? 'Connected' : 'Not configured'}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.m360 ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
-              <span>MaaS360 API: {status.m360 ? 'Connected' : 'Not configured'}</span>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: status.claude ? 'var(--green)' : 'var(--red)', flexShrink: 0 }} />
+            <span>Anthropic API: {status.claude ? 'Connected' : 'Not configured'}</span>
           </div>
-          {(!status.claude || !status.m360 || !status.twilio) && (
+          {!status.claude && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-              {[
-                !status.claude && 'ANTHROPIC_API_KEY',
-                !status.m360 && 'MaaS360 credentials',
-                !status.twilio && 'Twilio credentials',
-              ].filter(Boolean).join(', ')} needed in Vercel.
+              ANTHROPIC_API_KEY needed in Vercel.
             </div>
           )}
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, lineHeight: 1.5 }}>
+            Powers SMS intent parsing, translation, and automated replies.
+          </div>
         </div>
       )}
     </div>
