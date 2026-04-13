@@ -172,7 +172,7 @@ export default function SmsPage() {
   const [testResult, setTestResult] = useState<{ ruleId: string; ok: boolean; text: string } | null>(null)
   const [selectedMsgs, setSelectedMsgs] = useState<Set<string>>(new Set())
   const [twilioConfigured, setTwilioConfigured] = useState(true)
-  const [seeding, setSeeding] = useState(false)
+  const [clearing, setClearing] = useState(false)
 
   useEffect(() => {
     loadMessages()
@@ -221,23 +221,23 @@ export default function SmsPage() {
     setRules((data ?? []) as SmsRule[])
   }
 
-  async function seedDemo() {
-    setSeeding(true)
+  async function clearDemo() {
+    if (!confirm('Delete all demo messages (gmail_id starting with "demo_")? This cannot be undone.')) return
+    setClearing(true)
     setPollMsg(null)
     try {
-      const res = await fetch('/api/sms/seed-demo', { method: 'POST' })
-      const data = await res.json()
-      if (data.success) {
-        const warn = data.schema && String(data.schema).startsWith('legacy') ? ' ⚠️ Migration 027 not applied — outbound messages will appear as inbound. Run 027_twilio_sms.sql in Supabase SQL editor.' : ''
-        setPollMsg({ ok: true, text: `Demo loaded: ${data.inserted} messages (${data.outbound ?? 0} outbound) across 8 conversations.${warn}` })
-        await loadMessages()
+      const supabase = createClient()
+      const { error, count } = await supabase.from('sms_messages').delete({ count: 'exact' }).like('gmail_id', 'demo_%')
+      if (error) {
+        setPollMsg({ ok: false, text: `Clear failed: ${error.message}` })
       } else {
-        setPollMsg({ ok: false, text: data.error ?? 'Failed to load demo' })
+        setPollMsg({ ok: true, text: `Cleared ${count ?? 0} demo message(s).` })
+        await loadMessages()
       }
-    } catch {
-      setPollMsg({ ok: false, text: 'Network error' })
+    } catch (err) {
+      setPollMsg({ ok: false, text: err instanceof Error ? err.message : 'Network error' })
     } finally {
-      setSeeding(false)
+      setClearing(false)
     }
   }
 
@@ -252,7 +252,7 @@ export default function SmsPage() {
         loadMessages()
       } else {
         if (res.status === 501) {
-          setPollMsg({ ok: false, text: 'Gmail not configured yet. Use "Load Demo" to see sample conversations.' })
+          setPollMsg({ ok: false, text: 'Gmail not configured. Twilio inbound messages arrive via webhook automatically.' })
         } else {
           setPollMsg({ ok: false, text: data.error ?? 'Poll failed' })
         }
@@ -540,14 +540,14 @@ export default function SmsPage() {
         {/* Header with buttons */}
         <div style={{ padding: '12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 6, flexDirection: 'column' }}>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn-primary btn-sm" onClick={runPoll} disabled={polling || seeding} style={{ flex: 1, fontSize: 11 }}>
+            <button className="btn-primary btn-sm" onClick={runPoll} disabled={polling || clearing} style={{ flex: 1, fontSize: 11 }}>
               {polling ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Polling</> : <>📲 Poll Gmail</>}
-            </button>
-            <button className="btn-secondary btn-sm" onClick={seedDemo} disabled={seeding || polling} style={{ fontSize: 11 }}>
-              {seeding ? <><span className="spinner" style={{ width: 12, height: 12 }} /></> : <>🧪 Load Demo</>}
             </button>
             <button className="btn-secondary btn-sm" onClick={() => setShowRules(r => !r)} style={{ fontSize: 11 }}>
               ⚙️ Rules
+            </button>
+            <button className="btn-secondary btn-sm" onClick={clearDemo} disabled={clearing || polling} style={{ fontSize: 11 }} title="Delete any remaining demo messages">
+              {clearing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🧹 Clear Demo'}
             </button>
           </div>
           <input
