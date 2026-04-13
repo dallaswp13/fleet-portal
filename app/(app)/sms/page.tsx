@@ -200,12 +200,17 @@ export default function SmsPage() {
     setLoadingMsgs(true)
     const supabase = createClient()
     const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(500)
-    // Normalize: if migration 027 hasn't run, direction/recipient_phone may be missing
-    const normalized = (data ?? []).map(m => ({
-      ...m,
-      direction: m.direction ?? 'inbound',
-      recipient_phone: m.recipient_phone ?? null,
-    })) as SmsMessage[]
+    // Normalize: if migration 027 hasn't run, direction/recipient_phone may be missing.
+    // Heuristics: messages sent BY us (Dallas / System / Fleet Portal) are outbound;
+    // auto_reply actions are outbound; everything else is inbound.
+    const OUTBOUND_SENDERS = new Set(['dallas', 'system', 'fleet portal', 'la yellow support'])
+    const normalized = (data ?? []).map(m => {
+      const senderLower = (m.sender ?? '').toString().trim().toLowerCase()
+      const looksOutbound = OUTBOUND_SENDERS.has(senderLower) || m.action === 'auto_reply' || !!m.recipient_phone
+      const direction = m.direction ?? (looksOutbound ? 'outbound' : 'inbound')
+      const recipient_phone = m.recipient_phone ?? (looksOutbound ? m.sender_phone : null)
+      return { ...m, direction, recipient_phone }
+    }) as SmsMessage[]
     setMessages(normalized)
     setLoadingMsgs(false)
   }
@@ -714,8 +719,20 @@ export default function SmsPage() {
                       {committingId === msg.id ? (
                         <span className="spinner" style={{ width: 14, height: 14 }} />
                       ) : (
-                        <button className="btn-primary btn-sm" style={{ fontSize: 10, padding: '4px 8px' }} onClick={() => commitAction(msg)}>
-                          Execute {ACTION_LABELS[msg.action] ?? msg.action}
+                        <button
+                          className="btn-sm"
+                          style={{
+                            fontSize: 10, padding: '4px 10px',
+                            background: '#facc15',
+                            color: '#000',
+                            border: '1px solid #eab308',
+                            borderRadius: 6,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                          }}
+                          onClick={() => commitAction(msg)}>
+                          ⚡ Execute {ACTION_LABELS[msg.action] ?? msg.action}
                         </button>
                       )}
                       {commitResult?.id === msg.id && (
