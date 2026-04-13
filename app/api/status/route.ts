@@ -16,11 +16,18 @@ export async function GET() {
   const password  = process.env.MAAS360_PASSWORD ?? process.env.MAAS360_PASS ?? ''
   const m360 = !!(billingId && appId && accessKey && username && password)
 
-  const twilio = !!(
-    process.env.TWILIO_ACCOUNT_SID &&
-    process.env.TWILIO_AUTH_TOKEN &&
-    process.env.TWILIO_PHONE_NUMBER
-  )
+  const hasTwilioAuth   = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  const hasTwilioSender = !!(process.env.TWILIO_MESSAGING_SERVICE_SID || process.env.TWILIO_PHONE_NUMBER)
+  const twilio = hasTwilioAuth && hasTwilioSender
 
-  return NextResponse.json({ claude, m360, twilio })
+  return NextResponse.json({
+    claude,
+    m360,
+    twilio,
+    twilioDetail: {
+      auth: hasTwilioAuth,
+      sender: hasTwilioSender,
+      senderType: process.env.TWILIO_MESSAGING_SERVICE_SID ? 'messaging_service' : (process.env.TWILIO_PHONE_NUMBER ? 'phone_number' : 'none'),
+    },
+  })
 }
