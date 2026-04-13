@@ -184,6 +184,107 @@ function parseDevices(text: string): Record<string, unknown>[] {
   return Array.from(seen.values())
 }
 
+// ── Parse Tableau "Driver Report" ─────────────────────────────────────────────
+// Tableau quirks: file is UTF-16LE with a BOM, fields are TAB-separated (not
+// commas), and the phone column looks like "323 7105857 (PORT.)". Decoded by
+// detectAndDecodeTextFile() before reaching here.
+//
+// Maps onto public.drivers — populates personal_phone, drivers_license,
+// drivers_license_expire, address, etc. Driver names are split into First +
+// Last in the report; we recombine "FIRST LAST" for the existing `name` field.
+function parseDriverReport(text: string): Record<string, unknown>[] {
+  const lines = text.split(/\r?\n/).filter(l => l.trim())
+  if (lines.length < 2) return []
+
+  // Tableau uses tabs even in .csv exports
+  const splitRow = (l: string) => l.split('\t').map(s => s.trim())
+
+  const headers = splitRow(lines[0])
+  const idx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase())
+
+  const iFleet     = idx('Fleet ID')
+  const iDriver    = idx('Driver ID')
+  const iActive    = idx('Active')
+  const iAllowed   = idx('Allowed To Work')
+  const iCity      = idx('City')
+  const iLicExp    = idx('Drv License Expire')
+  const iLicNbr    = idx('Drv License Nbr')
+  const iEmail     = idx('Email Address')
+  const iFirst     = idx('First Name')
+  const iInsert    = idx('Insert Date')
+  const iLast      = idx('Last Name')
+  const iCmplnts   = idx('Nbr Complaints')
+  const iPhone     = idx('Phone - PORT')
+  const iState     = idx('State')
+  const iStreet1   = idx('Street1')
+  const iStreet2   = idx('Street2')
+  const iZip       = idx('Zip Code')
+
+  if (iDriver < 0 || iFleet < 0) {
+    throw new Error('Driver Report: missing required "Driver ID" or "Fleet ID" column')
+  }
+
+  // "323 7105857 (PORT.)" → "3237105857"; tolerate "(none)" / "" / leading 1
+  const cleanPhone = (raw: string | undefined): string | null => {
+    const s = (raw ?? '').replace(/\(port\.?\)/i, '').replace(/\D/g, '')
+    if (!s) return null
+    const trimmed = s.length === 11 && s[0] === '1' ? s.slice(1) : s
+    return trimmed.length === 10 ? trimmed : null
+  }
+
+  // "2024-10-04 00:00:00" → "2024-10-04"; tolerate empty / malformed
+  const cleanDate = (raw: string | undefined): string | null => {
+    const s = (raw ?? '').trim().slice(0, 10)
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null
+  }
+
+  const seen = new Map<number, Record<string, unknown>>()
+  const now  = new Date().toISOString()
+
+  for (let r = 1; r < lines.length; r++) {
+    const cols = splitRow(lines[r])
+    const driverIdRaw = cols[iDriver]
+    const id = parseInt((driverIdRaw ?? '').trim(), 10)
+    if (isNaN(id)) continue
+
+    const fleet = (cols[iFleet] ?? '').trim()
+    const first = clean(cols[iFirst])
+    const last  = clean(cols[iLast])
+    const fullName = [first, last].filter(Boolean).join(' ').trim() || null
+
+    const personalPhone = iPhone >= 0 ? cleanPhone(cols[iPhone]) : null
+    const activeRaw = clean(cols[iActive]) ?? ''
+    const allowedRaw = iAllowed >= 0 ? clean(cols[iAllowed]) ?? '' : ''
+    const cmpltRaw  = iCmplnts >= 0 ? cols[iCmplnts] : ''
+    const cmpltN    = cmpltRaw ? parseInt(cmpltRaw, 10) : NaN
+
+    seen.set(id, {
+      driver_id:              id,
+      fleet_id:               fleet,
+      // office is computed by DB trigger from fleet_id
+      name:                   fullName,
+      email:                  iEmail >= 0 ? clean(cols[iEmail]) : null,
+      active:                 activeRaw.toUpperCase() === 'Y',
+      allowed_to_work:        allowedRaw ? allowedRaw.toUpperCase() === 'Y' : null,
+      personal_phone:         personalPhone,
+      // personal_phone_norm is auto-set by DB trigger
+      drivers_license:        iLicNbr >= 0 ? clean(cols[iLicNbr]) : null,
+      drivers_license_expire: iLicExp >= 0 ? cleanDate(cols[iLicExp]) : null,
+      // drivers_license_state isn't in the Tableau report — column "State" is the
+      // address state, populated below
+      city:                   iCity >= 0 ? clean(cols[iCity]) : null,
+      state:                  iState >= 0 ? clean(cols[iState]) : null,
+      street1:                iStreet1 >= 0 ? clean(cols[iStreet1]) : null,
+      street2:                iStreet2 >= 0 ? clean(cols[iStreet2]) : null,
+      zip_code:               iZip >= 0 ? clean(cols[iZip]) : null,
+      insert_date:            iInsert >= 0 ? cleanDate(cols[iInsert]) : null,
+      complaints_count:       Number.isFinite(cmpltN) ? cmpltN : null,
+      updated_at:             now,
+    })
+  }
+  return Array.from(seen.values())
+}
+
 // ── Parse Verizon CSV ────────────────────────────────────────────────────────
 function parseVerizon(text: string): Record<string, unknown>[] {
   const rows = parseCSV(text)
@@ -259,14 +360,33 @@ async function parseDrivers(buffer: ArrayBuffer): Promise<Record<string, unknown
 }
 
 
+// Decode a CSV/TSV file buffer, auto-detecting UTF-16LE/BE BOM (Tableau exports
+// are UTF-16LE) and falling back to UTF-8.
+function decodeTextFile(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return new TextDecoder('utf-16le').decode(buffer).replace(/^\uFEFF/, '')
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return new TextDecoder('utf-16be').decode(buffer).replace(/^\uFEFF/, '')
+  }
+  return new TextDecoder('utf-8').decode(buffer).replace(/^\uFEFF/, '')
+}
+
 // ── Detect file type ─────────────────────────────────────────────────────────
-function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'devices' | 'verizon' | null {
+function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'driver_report' | 'devices' | 'verizon' | null {
   const lower = filename.toLowerCase()
   if (lower.includes('driver') && lower.endsWith('.xlsx')) return 'drivers'
   if (lower.endsWith('.xlsx')) return 'ccsi'
+  // Tableau driver report — recognized by filename or by header signature
+  if (lower.includes('driver report') || lower.includes('driver_report')) return 'driver_report'
   if (lower.includes('view_all_devices') || lower.includes('devices')) return 'devices'
   if (lower.includes('unbilled') || lower.includes('usage') || lower.includes('account')) return 'verizon'
-  const firstLine = text.slice(0, 300).toLowerCase()
+  const firstLine = text.slice(0, 600).toLowerCase()
+  // Tableau driver report uses tabs and has these distinctive columns
+  if (firstLine.includes('drv license nbr') || (firstLine.includes('phone - port') && firstLine.includes('driver id'))) {
+    return 'driver_report'
+  }
   if (firstLine.includes('wireless number')) return 'verizon'
   if (firstLine.includes('device id') && firstLine.includes('imei')) return 'devices'
   return null
@@ -297,11 +417,12 @@ export async function POST(req: NextRequest) {
 
         const buffer = await file.arrayBuffer()
         const isXlsx = file.name.toLowerCase().endsWith('.xlsx')
-        const text   = isXlsx ? '' : new TextDecoder().decode(buffer)
+        // decodeTextFile() handles UTF-16 BOM (Tableau quirk) + UTF-8 fallback
+        const text   = isXlsx ? '' : decodeTextFile(buffer)
         const type   = detectType(file.name, text)
 
         if (!type) {
-          send({ type: 'error', error: `Could not identify file type for "${file.name}". Expected CCSI.xlsx, View_All_Devices.csv, or account_unbilled_usage_report.csv` })
+          send({ type: 'error', error: `Could not identify file type for "${file.name}". Expected CCSI.xlsx, Active Drivers.xlsx, Driver Report.csv, View_All_Devices.csv, or account_unbilled_usage_report.csv` })
           controller.close(); return
         }
 
@@ -319,6 +440,20 @@ export async function POST(req: NextRequest) {
           })
           send({ type: 'done', total: driverRecs.length, message: `Imported ${driverRecs.length} drivers` })
           await writeAuditLog({ userEmail: user.email!, action: 'import_drivers', targetType: 'device', targetId: file.name, payload: { filename: file.name }, result: { total: driverRecs.length }, success: true })
+          controller.close(); return
+        } else if (type === 'driver_report') {
+          // Tableau Driver Report → drivers (license, address, personal phone)
+          const drvRecs = parseDriverReport(text)
+          if (drvRecs.length === 0) {
+            send({ type: 'error', error: 'Driver Report parsed 0 rows. Check that the file is the Tableau export with the expected columns (Fleet ID, Driver ID, Phone - PORT, Drv License Nbr, …).' })
+            controller.close(); return
+          }
+          await upsertAll('drivers', 'driver_id', drvRecs, 200, (done, total) => {
+            const pct = 15 + Math.round((done / total) * 80)
+            send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
+          })
+          await writeAuditLog({ userEmail: user.email!, action: 'import_driver_report', targetType: 'device', targetId: file.name, payload: { filename: file.name, size: file.size }, result: { total: drvRecs.length }, success: true })
+          send({ type: 'done', total: drvRecs.length, message: `Imported ${drvRecs.length} driver-report rows (license, phone, address)` })
           controller.close(); return
         } else if (type === 'ccsi') {
           const result = await parseCCSI(buffer)

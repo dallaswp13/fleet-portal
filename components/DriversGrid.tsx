@@ -9,6 +9,11 @@ interface Driver {
   name: string | null; email: string | null; image_url: string | null
   active: boolean; personal_phone: string | null; notes: string | null
   seated_vehicle_number: number | null; seated_vehicle_id: string | null
+  drivers_license: string | null
+  drivers_license_expire: string | null
+  city: string | null; state: string | null
+  street1: string | null; street2: string | null; zip_code: string | null
+  allowed_to_work: boolean | null; complaints_count: number | null
   created_at: string; updated_at: string
 }
 
@@ -121,10 +126,23 @@ export default function DriversGrid({ drivers: rawDrivers, page, totalPages, tot
                 <span className={`badge ${selected.active ? 'badge-green' : 'badge-gray'}`}>{selected.active ? 'Active' : 'Inactive'}</span>
               </div>
 
-              {[
-                { label: 'Email',          value: selected.email?.trim() || null },
-                { label: 'Seated Vehicle', value: selected.seated_vehicle_number ? `#${selected.seated_vehicle_number} ${selected.fleet_id.toUpperCase()}` : null },
-              ].map(r => r.value && (
+              {(() => {
+                const lic = selected.drivers_license
+                const exp = selected.drivers_license_expire
+                const expDate = exp ? new Date(exp) : null
+                const expired = expDate ? expDate.getTime() < Date.now() : false
+                const expSoon = expDate ? !expired && expDate.getTime() < Date.now() + 60 * 86400_000 : false
+                const addr = [selected.street1, selected.street2, [selected.city, selected.state].filter(Boolean).join(', '), selected.zip_code]
+                  .filter(Boolean).join(' · ')
+                return [
+                  { label: 'Email',          value: selected.email?.trim() || null },
+                  { label: 'Phone',          value: selected.personal_phone || null },
+                  { label: 'Drivers License', value: lic ? <span><span style={{ fontFamily: 'var(--font-mono)' }}>{lic}</span>{exp && <span style={{ marginLeft: 8, color: expired ? 'var(--red)' : expSoon ? 'var(--amber)' : 'var(--text3)', fontSize: 11 }}>exp {exp}{expired ? ' (EXPIRED)' : expSoon ? ' (soon)' : ''}</span>}</span> : null },
+                  { label: 'Address',        value: addr || null },
+                  { label: 'Seated Vehicle', value: selected.seated_vehicle_number ? `#${selected.seated_vehicle_number} ${selected.fleet_id.toUpperCase()}` : null },
+                  { label: 'Complaints',     value: selected.complaints_count != null && selected.complaints_count > 0 ? String(selected.complaints_count) : null },
+                ]
+              })().map(r => r.value && (
                 <div key={r.label} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                   <div style={{ width: 130, fontSize: 11, color: 'var(--text3)', flexShrink: 0 }}>{r.label}</div>
                   <div style={{ fontSize: 12 }}>{r.value}</div>
@@ -159,7 +177,6 @@ export default function DriversGrid({ drivers: rawDrivers, page, totalPages, tot
               ) : (
                 <div style={{ marginTop: 8 }}>
                   {[
-                    { label: 'Personal Phone', value: selected.personal_phone },
                     { label: 'Notes',          value: selected.notes },
                   ].map(r => r.value && (
                     <div key={r.label} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>

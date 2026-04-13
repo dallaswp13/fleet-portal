@@ -101,10 +101,12 @@ export default function UpdateDBContent() {
 
   function fileTypeLabel(name: string): { label: string; color: string } {
     const lower = name.toLowerCase()
+    if (lower.includes('driver report') || lower.includes('driver_report')) return { label: 'Driver Report', color: 'badge-purple' }
+    if (lower.endsWith('.xlsx') && lower.includes('driver')) return { label: 'Drivers', color: 'badge-gray' }
     if (lower.endsWith('.xlsx')) return { label: 'CCSI', color: 'badge-blue' }
     if (lower.includes('device')) return { label: 'Devices', color: 'badge-amber' }
     if (lower.includes('unbilled') || lower.includes('usage') || lower.includes('account')) return { label: 'Verizon', color: 'badge-green' }
-    if (lower.includes('driver'))      return { label: 'Drivers',      color: 'badge-gray' }
+    if (lower.includes('driver')) return { label: 'Driver Report', color: 'badge-purple' }
     return { label: 'CSV', color: 'badge-gray' }
   }
 
@@ -120,6 +122,7 @@ export default function UpdateDBContent() {
           { icon: '📄', name: 'View_All_Devices.csv',              desc: 'MaaS360 device list',    color: 'var(--amber)' },
           { icon: '📄', name: 'account_unbilled_usage_report.csv', desc: 'Verizon usage data',     color: 'var(--green)' },
           { icon: '📊', name: 'CCSI-drivers.xlsx',                    desc: 'Driver roster + photos', color: '#9b59b6' },
+          { icon: '📄', name: 'Driver Report.csv',                  desc: 'Tableau export — license, phone, address', color: '#7c3aed' },
         ].map(f => (
           <div key={f.name} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
             <div style={{ fontSize: 20, marginBottom: 6 }}>{f.icon}</div>

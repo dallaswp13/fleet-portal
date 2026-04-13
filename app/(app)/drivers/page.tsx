@@ -43,7 +43,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     else if (fleetIds !== null && fleetIds.length === 0) q = q.eq('fleet_id', '___NONE___')
     if (search) {
       const like = `%${search}%`
-      q = q.or(`name.ilike.${like},email.ilike.${like},driver_id::text.ilike.${like},personal_phone.ilike.${like}`)
+      q = q.or(`name.ilike.${like},email.ilike.${like},driver_id::text.ilike.${like},personal_phone.ilike.${like},drivers_license.ilike.${like}`)
     }
     return q
   }
