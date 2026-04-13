@@ -25,6 +25,12 @@ interface SmsMessage {
   source_language: string | null
   direction: 'inbound' | 'outbound'
   recipient_phone: string | null
+  claude_status: 'thinking' | 'replied' | 'skipped' | 'failed' | null
+  is_claude_reply: boolean | null
+  claude_feedback: 'up' | 'down' | null
+  claude_feedback_note: string | null
+  claude_feedback_at: string | null
+  claude_feedback_by: string | null
 }
 
 interface SmsRule {
@@ -172,6 +178,9 @@ export default function SmsPage() {
   const [savingRule, setSavingRule] = useState(false)
   const [selectedMsgs, setSelectedMsgs] = useState<Set<string>>(new Set())
   const [twilioConfigured, setTwilioConfigured] = useState(true)
+  const [feedbackModal, setFeedbackModal] = useState<{ msg: SmsMessage; rating: 'up' | 'down' } | null>(null)
+  const [feedbackNote, setFeedbackNote] = useState('')
+  const [savingFeedback, setSavingFeedback] = useState(false)
 
   useEffect(() => {
     loadMessages()
@@ -313,6 +322,38 @@ export default function SmsPage() {
     } finally {
       setSendingReply(false)
     }
+  }
+
+  async function submitFeedback(msg: SmsMessage, rating: 'up' | 'down' | null, note: string) {
+    setSavingFeedback(true)
+    try {
+      const res = await fetch('/api/sms/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId: msg.id, rating, note: note.trim() || undefined }),
+      })
+      const data = await res.json()
+      if (!data.ok) {
+        setPollMsg({ ok: false, text: data.error ?? 'Failed to save feedback' })
+      }
+      setFeedbackModal(null)
+      setFeedbackNote('')
+      loadMessages()
+    } catch {
+      setPollMsg({ ok: false, text: 'Network error' })
+    } finally {
+      setSavingFeedback(false)
+    }
+  }
+
+  async function quickFeedback(msg: SmsMessage, rating: 'up' | 'down') {
+    // Thumbs up is one-click. Thumbs down opens the modal for a note.
+    if (rating === 'down') {
+      setFeedbackNote(msg.claude_feedback_note ?? '')
+      setFeedbackModal({ msg, rating })
+      return
+    }
+    await submitFeedback(msg, rating, '')
   }
 
   async function assignVehicle() {
@@ -630,13 +671,16 @@ export default function SmsPage() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
               {conversationMessages.map(msg => {
                 const isOutbound = msg.direction === 'outbound'
-                const isAutoReply = isOutbound && msg.action === 'auto_reply'
-                // Outbound from Dallas: blue, auto-reply: teal/green, inbound: distinct card
-                const bubbleBg = isAutoReply
-                  ? 'linear-gradient(135deg, #0d9488, #14b8a6)'
-                  : isOutbound
-                    ? 'var(--accent)'
-                    : 'var(--bg2)'
+                const isClaudeReply = isOutbound && (msg.is_claude_reply === true || msg.action === 'claude_reply')
+                const isAutoReply = isOutbound && msg.action === 'auto_reply' && !isClaudeReply
+                // Outbound from Dallas: blue, auto-reply: teal/green, Claude: purple/violet, inbound: distinct card
+                const bubbleBg = isClaudeReply
+                  ? 'linear-gradient(135deg, #7c3aed, #a855f7)'
+                  : isAutoReply
+                    ? 'linear-gradient(135deg, #0d9488, #14b8a6)'
+                    : isOutbound
+                      ? 'var(--accent)'
+                      : 'var(--bg2)'
                 const bubbleColor = isOutbound ? 'white' : 'var(--text)'
                 const bubbleBorder = isOutbound ? 'none' : '1px solid var(--border)'
                 const bubbleShadow = isOutbound ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
@@ -654,7 +698,12 @@ export default function SmsPage() {
                       <span style={{ fontSize: 11 }}>⚡</span> Auto-Reply
                     </div>
                   )}
-                  {isOutbound && !isAutoReply && (
+                  {isClaudeReply && (
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#a855f7', marginBottom: 2, marginRight: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontSize: 11 }}>🤖</span> Claude
+                    </div>
+                  )}
+                  {isOutbound && !isAutoReply && !isClaudeReply && (
                     <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 2, marginRight: 4 }}>
                       {msg.sender || 'You'}
                     </div>
@@ -700,6 +749,49 @@ export default function SmsPage() {
                       {msg.result}
                     </div>
                   )}
+                  {/* Claude feedback buttons — shown only on Claude's outbound replies */}
+                  {isClaudeReply && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginRight: 4 }}>
+                      <button
+                        onClick={() => quickFeedback(msg, 'up')}
+                        title="Claude handled this well"
+                        style={{
+                          border: '1px solid var(--border)',
+                          background: msg.claude_feedback === 'up' ? 'rgba(34, 197, 94, 0.15)' : 'var(--bg2)',
+                          color: msg.claude_feedback === 'up' ? '#16a34a' : 'var(--text3)',
+                          borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
+                          fontWeight: msg.claude_feedback === 'up' ? 700 : 500,
+                        }}>
+                        👍
+                      </button>
+                      <button
+                        onClick={() => quickFeedback(msg, 'down')}
+                        title="Claude got this wrong — leave a correction"
+                        style={{
+                          border: '1px solid var(--border)',
+                          background: msg.claude_feedback === 'down' ? 'rgba(239, 68, 68, 0.15)' : 'var(--bg2)',
+                          color: msg.claude_feedback === 'down' ? '#dc2626' : 'var(--text3)',
+                          borderRadius: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer',
+                          fontWeight: msg.claude_feedback === 'down' ? 700 : 500,
+                        }}>
+                        👎
+                      </button>
+                      {msg.claude_feedback === 'down' && msg.claude_feedback_note && (
+                        <span style={{ fontSize: 10, color: 'var(--text3)', fontStyle: 'italic', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                          title={msg.claude_feedback_note}>
+                          Correction: &ldquo;{msg.claude_feedback_note}&rdquo;
+                        </span>
+                      )}
+                      {msg.claude_feedback && (
+                        <button
+                          onClick={() => submitFeedback(msg, null, '')}
+                          title="Clear feedback"
+                          style={{ border: 'none', background: 'transparent', color: 'var(--text3)', cursor: 'pointer', fontSize: 10, textDecoration: 'underline' }}>
+                          clear
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {msg.action && msg.action !== 'unknown' && msg.action !== 'auto_reply' && msg.vehicle_number && msg.success === null && msg.direction === 'inbound' && (
                     <div style={{ marginTop: 8 }}>
                       {committingId === msg.id ? (
@@ -731,6 +823,34 @@ export default function SmsPage() {
                 </div>
                 )
               })}
+              {/* Claude thinking indicator — shown when the latest inbound row
+                  has claude_status='thinking' and no Claude reply has posted yet. */}
+              {(() => {
+                const last = conversationMessages[conversationMessages.length - 1]
+                if (!last || last.direction !== 'inbound') return null
+                if (last.claude_status !== 'thinking') return null
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 16, background: 'rgba(168, 85, 247, 0.08)', border: '1px dashed rgba(168, 85, 247, 0.35)', alignSelf: 'flex-start', maxWidth: '70%', marginBottom: 8 }}>
+                    <span style={{ fontSize: 14 }}>🤖</span>
+                    <span className="spinner" style={{ width: 12, height: 12, borderColor: '#a855f7 transparent transparent transparent' }} />
+                    <span style={{ fontSize: 12, color: '#a855f7', fontWeight: 600 }}>Claude is thinking…</span>
+                  </div>
+                )
+              })()}
+              {/* Claude failure indicator */}
+              {(() => {
+                const last = conversationMessages[conversationMessages.length - 1]
+                if (!last || last.direction !== 'inbound') return null
+                if (last.claude_status !== 'failed') return null
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 16, background: 'var(--amber-bg)', alignSelf: 'flex-start', maxWidth: '70%', marginBottom: 8 }}>
+                    <span style={{ fontSize: 14 }}>⚠️</span>
+                    <span style={{ fontSize: 12, color: 'var(--amber)', fontWeight: 600 }}>
+                      Claude couldn&rsquo;t reply automatically — a human should respond.
+                    </span>
+                  </div>
+                )
+              })()}
               <div ref={messagesEndRef} />
             </div>
 
@@ -898,7 +1018,42 @@ export default function SmsPage() {
             </div>
 
             <div style={{ padding: '8px 20px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)' }}>
-              Rules run before Claude — faster and no API cost. Select messages in the conversation to test a rule against specific ones.
+              Rules run before Claude. If any keyword rule matches, Claude does NOT reply — the admin handles via Execute. If no rule matches, Claude generates a conversational reply in the driver&rsquo;s language and learns from your thumbs-down corrections.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CLAUDE FEEDBACK MODAL (thumbs down) */}
+      {feedbackModal && (
+        <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && setFeedbackModal(null)}>
+          <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: 500, boxShadow: 'var(--shadow-lg)', padding: '24px' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 18 }}>👎</span> Correct Claude&rsquo;s reply
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.5 }}>
+              Explain what Claude got wrong. Your note is saved and fed into future Claude prompts as a &ldquo;lesson learned&rdquo; so this mistake isn&rsquo;t repeated.
+            </div>
+            <div style={{ padding: '10px 12px', background: 'var(--bg3)', borderRadius: 'var(--radius)', fontSize: 12, marginBottom: 12, fontStyle: 'italic', lineHeight: 1.5 }}>
+              &ldquo;{feedbackModal.msg.sms_text}&rdquo;
+            </div>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label">What should Claude have done differently?</label>
+              <textarea
+                placeholder="e.g. &quot;The driver was asking about PIM, not driver tablet. Don't confuse the two.&quot;"
+                value={feedbackNote}
+                onChange={e => setFeedbackNote(e.target.value)}
+                rows={4}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontFamily: 'inherit', fontSize: 13, resize: 'vertical' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-secondary btn-sm" onClick={() => { setFeedbackModal(null); setFeedbackNote('') }} disabled={savingFeedback}>
+                Cancel
+              </button>
+              <button className="btn-primary btn-sm" onClick={() => submitFeedback(feedbackModal.msg, 'down', feedbackNote)} disabled={savingFeedback || !feedbackNote.trim()}>
+                {savingFeedback ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Saving…</> : 'Save correction'}
+              </button>
             </div>
           </div>
         </div>
