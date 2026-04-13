@@ -14,10 +14,11 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendSms, isTwilioConfigured, getTwilioNumber, getMessagingServiceSid } from '@/lib/twilio'
+import { ASC_FLEETS } from '@/lib/filters'
 
 type Svc = SupabaseClient
 
-const ASC_FLEET_IDS = ['E', 'L', 'S', 'Y', 'U']
+const ASC_FLEET_IDS = [...ASC_FLEETS]
 
 const SYSTEM_PROMPT = `You are an IT support assistant for a taxi fleet company.
 Drivers from ASC fleets (sub-fleets E, L, S, Y, U) text a support line with IT requests.
@@ -150,29 +151,49 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   const { messageId, smsText, senderPhone } = input
   const lower = smsText.toLowerCase()
 
-  // 1. Load active rules (priority desc)
-  const { data: rulesData } = await svc
+  // 1. Load active rules (priority desc). `actions` is the multi-action
+  //    array (migration 031); `action` is the legacy single-action column
+  //    kept in sync with actions[0].
+  let { data: rulesData, error: rulesErr } = await svc
     .from('sms_rules')
-    .select('id, name, keywords, action, reply_text, priority')
+    .select('id, name, keywords, action, actions, reply_text, priority')
     .eq('enabled', true)
     .order('priority', { ascending: false })
-  const rules = (rulesData ?? []) as {
+  // If migration 031 hasn't been applied, retry without the actions column.
+  if (rulesErr && /column .*actions.* does not exist/i.test(rulesErr.message)) {
+    const retry = await svc.from('sms_rules')
+      .select('id, name, keywords, action, reply_text, priority')
+      .eq('enabled', true)
+      .order('priority', { ascending: false })
+    rulesData = retry.data as typeof rulesData
+    rulesErr = retry.error
+  }
+  const rules = (rulesData ?? []).map(r => ({
+    ...r,
+    actions: (r as { actions?: string[] | null }).actions ?? (r.action ? [r.action] : []),
+  })) as {
     id: string; name: string; keywords: string[] | null; action: string
-    reply_text: string | null; priority: number
+    actions: string[]; reply_text: string | null; priority: number
   }[]
 
   const ruleMatch = rules.find(r =>
     Array.isArray(r.keywords) && r.keywords.some(k => k && lower.includes(String(k).toLowerCase()))
   ) ?? null
 
+  // Pick the non-auto-reply action (if any) as the intent.action so the
+  // Execute button on the inbound row still surfaces the M360 command.
+  // If the rule only contains auto_reply, keep that as the action.
+  const ruleActions = ruleMatch?.actions ?? []
+  const primaryAction = ruleActions.find(a => a !== 'auto_reply') ?? ruleActions[0] ?? null
+
   // 2. Intent parsing
   let intent: Intent
-  if (ruleMatch) {
+  if (ruleMatch && primaryAction) {
     intent = {
-      action: ruleMatch.action,
+      action: primaryAction,
       vehicle_number: extractVehicleNumber(smsText),
       lease_number: extractLeaseNumber(smsText),
-      target: ruleMatch.action.includes('pim') ? 'pim' : 'driver',
+      target: primaryAction.includes('pim') ? 'pim' : 'driver',
       confidence: 'high',
       reason: `Rule: ${ruleMatch.name}`,
       translated_text: '',
@@ -230,7 +251,7 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   let autoReplyError: string | null = null
   let autoReplyBody: string | null = null
 
-  if (ruleMatch && ruleMatch.action === 'auto_reply' && ruleMatch.reply_text && senderPhone && isTwilioConfigured()) {
+  if (ruleMatch && ruleActions.includes('auto_reply') && ruleMatch.reply_text && senderPhone && isTwilioConfigured()) {
     const body = renderTemplate(ruleMatch.reply_text, {
       vehicle: vehicleNum || '',
       vehicle_number: vehicleNum || '',
@@ -291,7 +312,7 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     rule_name: ruleMatch?.name ?? null,
     result,
     // For auto_reply rules, we consider the inbound "handled" on success
-    success: ruleMatch?.action === 'auto_reply' ? (autoReplySent ? true : (autoReplyError ? false : null)) : null,
+    success: ruleActions.includes('auto_reply') ? (autoReplySent ? true : (autoReplyError ? false : null)) : null,
     processed: true,
     translated_text: intent.translated_text || null,
     source_language: intent.source_language || null,

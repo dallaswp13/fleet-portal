@@ -13,7 +13,9 @@ Multi-user taxi fleet management portal built with **Next.js 15**, **Supabase**,
 | Hosting | Vercel |
 | Source control | GitHub → Vercel CI/CD |
 | Device management | IBM MaaS360 API |
-| Wireless | Verizon Business (ThingSpace) API |
+| Wireless | Verizon data imported via CSV (no live API) |
+| SMS | Twilio webhook + rule-based auto-reply |
+| Intent parsing | Anthropic Claude API |
 
 ---
 
@@ -72,11 +74,15 @@ MAAS360_APP_ACCESS_KEY=your-app-access-key
 MAAS360_USERNAME=your-username
 MAAS360_PASSWORD=your-password
 
-# Verizon ThingSpace (from developer.verizon.com)
-VERIZON_BASE_URL=https://thingspace.verizon.com/api
-VERIZON_CLIENT_ID=your-client-id
-VERIZON_CLIENT_SECRET=your-client-secret
-VERIZON_ACCOUNT_NAME=your-account-name
+# Twilio (SMS webhook + outbound auto-reply)
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+# Either messaging service SID or a phone number is required
+TWILIO_MESSAGING_SERVICE_SID=MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# TWILIO_PHONE_NUMBER=+15555551234
+
+# Anthropic (Claude intent parsing for SMS)
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ### 4. Create admin user
@@ -154,19 +160,16 @@ Reference: [MaaS360 API Docs](https://help.hcltechsw.com/maas360/en_us/apidocs.h
 
 ---
 
-## Verizon API — Activate SIM
+## SMS — Twilio webhook + rule-based auto-reply
 
-Action is sent via **POST /api/verizon/activate** with JSON body:
+Inbound SMS arrives at **POST /api/sms/webhook** (form-encoded from Twilio).
+The webhook stores the message, runs `lib/smsProcess.ts` (rule match → Claude
+intent parsing → vehicle resolution → optional auto-reply via Twilio), and
+returns empty TwiML. Outbound sends go through **POST /api/sms/send**.
 
-| Field | Type | Required |
-|-------|------|----------|
-| `phoneNumber` | string (10-digit) | Yes |
-| `iccid` | string | No |
-| `accountNumber` | string | No |
-| `vehicleNumber` | number | No |
-
-**Verizon credentials:** Register at [ThingSpace Developer Portal](https://thingspace.verizon.com).
-Reference: [ThingSpace API Docs](https://thingspace.verizon.com/documentation/)
+Configure in Twilio Console: **Messaging Services → your service →
+Integration → Inbound Settings → Send a webhook** pointing at
+`https://<your-deployment>/api/sms/webhook`.
 
 ---
 
@@ -207,8 +210,9 @@ fleet-portal/
 │   │   ├── lines/          # Verizon lines
 │   │   └── audit/          # Audit log
 │   ├── api/
-│   │   ├── maas360/action/ # MaaS360 device action API
-│   │   └── verizon/activate/ # Verizon SIM activate API
+│   │   ├── maas360/        # MaaS360 device-action + keepalive routes
+│   │   ├── sms/            # Twilio webhook + outbound send
+│   │   └── status/         # Health check for integrations
 │   ├── login/              # Login page
 │   └── globals.css
 ├── components/
@@ -217,7 +221,8 @@ fleet-portal/
 │   └── VehiclesTable.tsx   # Sortable/searchable table
 ├── lib/
 │   ├── maas360.ts          # IBM MaaS360 API client
-│   ├── verizon.ts          # Verizon API client
+│   ├── twilio.ts           # Twilio SMS client
+│   ├── smsProcess.ts       # Inbound SMS pipeline (rule match + auto-reply)
 │   ├── audit.ts            # Audit log helper
 │   └── supabase/           # Supabase client (browser + server)
 ├── scripts/

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
 /**
  * GET /api/image-proxy?url=http://...
@@ -6,6 +7,11 @@ import { NextRequest, NextResponse } from 'next/server'
  * This avoids mixed-content browser blocking and any S3 CORS restrictions.
  */
 export async function GET(req: NextRequest) {
+  // Require an authenticated session — the proxy is only for in-app photos.
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return new NextResponse('Unauthorized', { status: 401 })
+
   const url = req.nextUrl.searchParams.get('url')
   if (!url) return new NextResponse('Missing url', { status: 400 })
 

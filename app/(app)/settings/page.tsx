@@ -192,8 +192,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
               // ── RECENTLY COMPLETED ────────────────────────────────────────
               {
-                status: 'done', label: 'Gmail OAuth — Connected',
-                detail: 'GMAIL_CREDENTIALS set in Vercel. Poll Now pulls real driver SMS messages from Google Voice. Inbox showing live + demo messages.',
+                status: 'done', label: 'Twilio SMS — Live',
+                detail: 'Inbound texts arrive via Twilio webhook at /api/sms/webhook. Rule-based auto-reply is live; "NoM" confirmed end-to-end 2026-04-13. Gmail/Google Voice polling fully removed.',
               },
               {
                 status: 'done', label: 'Available Lines — DB-Side Filtering',

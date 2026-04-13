@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
+import { ASC_FLEETS } from '@/lib/filters'
 
 interface SmsMessage {
   id: string
@@ -30,7 +31,8 @@ interface SmsRule {
   id: string
   name: string
   keywords: string[]
-  action: string
+  action: string              // legacy single-action (mirrors actions[0])
+  actions: string[] | null    // multi-action support (migration 031)
   reply_text: string | null
   enabled: boolean
   priority: number
@@ -165,11 +167,9 @@ export default function SmsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [newKeywords, setNewKeywords] = useState('')
-  const [newAction, setNewAction] = useState('reboot_driver')
+  const [newActions, setNewActions] = useState<string[]>(['reboot_driver'])
   const [newReply, setNewReply] = useState('')
   const [savingRule, setSavingRule] = useState(false)
-  const [testingRule, setTestingRule] = useState<string | null>(null)
-  const [testResult, setTestResult] = useState<{ ruleId: string; ok: boolean; text: string } | null>(null)
   const [selectedMsgs, setSelectedMsgs] = useState<Set<string>>(new Set())
   const [twilioConfigured, setTwilioConfigured] = useState(true)
 
@@ -177,7 +177,7 @@ export default function SmsPage() {
     loadMessages()
     loadRules()
     const supabase = createClient()
-    supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', ['E', 'L', 'S', 'Y', 'U']).order('vehicle_number').then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
+    supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', [...ASC_FLEETS]).order('vehicle_number').then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
 
     // Supabase Realtime: auto-refresh on any sms_messages change so new
     // inbound texts and outbound auto-replies appear without a page refresh.
@@ -228,7 +228,11 @@ export default function SmsPage() {
   async function loadRules() {
     const supabase = createClient()
     const { data } = await supabase.from('sms_rules').select('*').order('priority', { ascending: false })
-    setRules((data ?? []) as SmsRule[])
+    const normalized = (data ?? []).map(r => ({
+      ...r,
+      actions: (r as { actions?: string[] | null }).actions ?? (r.action ? [r.action] : []),
+    })) as SmsRule[]
+    setRules(normalized)
   }
 
   async function refresh() {
@@ -255,12 +259,19 @@ export default function SmsPage() {
       conversationMap.get(phone)!.messages.push(msg)
     }
 
+    const OUTBOUND_SENDER_LABELS = new Set(['system', 'fleet portal', 'la yellow support', 'dallas'])
     const conversations: Conversation[] = Array.from(conversationMap.entries()).map(([phone, data]) => {
       const lastMessage = data.messages[0]
       const unprocessedCount = data.messages.filter(m => m.success === null && m.action).length
+      // Pick the most recent INBOUND message's sender as the contact label.
+      // Outbound messages have sender='System'/'Fleet Portal' which would
+      // mislabel the contact thread.
+      const inboundSender = data.messages
+        .find(m => m.direction === 'inbound' && m.sender && !OUTBOUND_SENDER_LABELS.has(m.sender.toLowerCase().trim()))
+        ?.sender ?? null
       return {
         phone,
-        displayName: lastMessage.sender || null,
+        displayName: inboundSender,
         lastMessage,
         messageCount: data.messages.length,
         unprocessedCount,
@@ -388,23 +399,44 @@ export default function SmsPage() {
     const keywords = newKeywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean)
     const maxPri = rules.length > 0 ? Math.max(...rules.map(r => r.priority)) : 0
 
+    const actionsToSave = newActions.length > 0 ? newActions : ['unknown']
+    const includesAutoReply = actionsToSave.includes('auto_reply')
+    const basePayload = {
+      name: newName,
+      keywords,
+      action: actionsToSave[0],
+      actions: actionsToSave,
+      reply_text: includesAutoReply ? newReply : null,
+    }
+
+    // Try with `actions` column; fall back to legacy payload if migration 031
+    // hasn't been applied yet.
     if (editingId) {
-      await supabase.from('sms_rules').update({
-        name: newName,
-        keywords,
-        action: newAction,
-        reply_text: newAction === 'auto_reply' ? newReply : null,
-        updated_at: new Date().toISOString()
+      let { error } = await supabase.from('sms_rules').update({
+        ...basePayload,
+        updated_at: new Date().toISOString(),
       }).eq('id', editingId)
+      if (error && /column .*actions.* does not exist/i.test(error.message)) {
+        const { actions: _a, ...legacy } = basePayload
+        await supabase.from('sms_rules').update({
+          ...legacy,
+          updated_at: new Date().toISOString(),
+        }).eq('id', editingId)
+      }
     } else {
-      await supabase.from('sms_rules').insert({
-        name: newName,
-        keywords,
-        action: newAction,
-        reply_text: newAction === 'auto_reply' ? newReply : null,
+      let { error } = await supabase.from('sms_rules').insert({
+        ...basePayload,
         priority: maxPri + 1,
-        created_by: user?.email ?? 'admin'
+        created_by: user?.email ?? 'admin',
       })
+      if (error && /column .*actions.* does not exist/i.test(error.message)) {
+        const { actions: _a, ...legacy } = basePayload
+        await supabase.from('sms_rules').insert({
+          ...legacy,
+          priority: maxPri + 1,
+          created_by: user?.email ?? 'admin',
+        })
+      }
     }
     setSavingRule(false)
     resetForm()
@@ -416,7 +448,7 @@ export default function SmsPage() {
     setEditingId(null)
     setNewName('')
     setNewKeywords('')
-    setNewAction('reboot_driver')
+    setNewActions(['reboot_driver'])
     setNewReply('')
   }
 
@@ -424,7 +456,7 @@ export default function SmsPage() {
     setEditingId(r.id)
     setNewName(r.name)
     setNewKeywords(r.keywords.join(', '))
-    setNewAction(r.action)
+    setNewActions(r.actions && r.actions.length > 0 ? r.actions : [r.action])
     setNewReply(r.reply_text ?? '')
     setShowNewRule(true)
     setShowRules(true)
@@ -441,35 +473,6 @@ export default function SmsPage() {
     const supabase = createClient()
     await supabase.from('sms_rules').delete().eq('id', id)
     loadRules()
-  }
-
-  async function testRule(rule: SmsRule) {
-    const ids = selectedMsgs.size > 0 ? Array.from(selectedMsgs) : messages.slice(0, 10).map(m => m.id)
-    if (ids.length === 0) {
-      setTestResult({ ruleId: rule.id, ok: false, text: 'No messages to test on yet.' })
-      return
-    }
-    setTestingRule(rule.id)
-    try {
-      const res = await fetch('/api/sms/poll', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ testRuleAction: rule.action, messageIds: ids })
-      })
-      const data = await res.json()
-      if (!data.success) {
-        setTestResult({ ruleId: rule.id, ok: false, text: data.error ?? 'API error' })
-      } else {
-        const results = (data.results ?? []) as { id: string; success: boolean; result: string; detail: string }[]
-        const succeeded = results.filter(r => r.success).length
-        const details = results.map(r => `${r.success ? '✓' : '✗'} ${r.detail || r.result}`).join(' | ')
-        setTestResult({ ruleId: rule.id, ok: true, text: `${succeeded}/${results.length} succeeded: ${details}` })
-      }
-      loadMessages()
-    } catch (err) {
-      setTestResult({ ruleId: rule.id, ok: false, text: `Test failed: ${err instanceof Error ? err.message : 'Network error'}` })
-    }
-    setTestingRule(null)
   }
 
   function toggleMsgSelect(id: string) {
@@ -780,7 +783,7 @@ export default function SmsPage() {
             {showNewRule && (
               <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg3)' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 12 }}>{editingId ? 'Edit Rule' : 'New Rule'}</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
                   <div className="form-group" style={{ margin: 0 }}>
                     <label className="form-label">Rule Name</label>
                     <input placeholder="e.g. Reboot Request" value={newName} onChange={e => setNewName(e.target.value)} />
@@ -789,14 +792,30 @@ export default function SmsPage() {
                     <label className="form-label">Keywords (comma-separated)</label>
                     <input placeholder="reboot, restart, frozen" value={newKeywords} onChange={e => setNewKeywords(e.target.value)} />
                   </div>
-                  <div className="form-group" style={{ margin: 0 }}>
-                    <label className="form-label">Action</label>
-                    <select value={newAction} onChange={e => setNewAction(e.target.value)}>
-                      {ACTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label className="form-label">Actions (select one or more)</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6, padding: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg)' }}>
+                    {ACTION_OPTIONS.map(o => {
+                      const checked = newActions.includes(o.value)
+                      return (
+                        <label key={o.value} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, padding: '4px 6px', borderRadius: 4, background: checked ? 'var(--blue-bg)' : 'transparent' }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => {
+                              setNewActions(prev => e.target.checked
+                                ? [...prev, o.value]
+                                : prev.filter(a => a !== o.value))
+                            }}
+                          />
+                          <span>{o.label}</span>
+                        </label>
+                      )
+                    })}
                   </div>
                 </div>
-                {newAction === 'auto_reply' && (
+                {newActions.includes('auto_reply') && (
                   <div className="form-group" style={{ marginBottom: 12 }}>
                     <label className="form-label">Reply Message</label>
                     <input placeholder="e.g. Your request has been received. IT will assist shortly." value={newReply} onChange={e => setNewReply(e.target.value)} />
@@ -818,11 +837,6 @@ export default function SmsPage() {
                 </div>
               ) : (
                 <>
-                  {selectedMsgs.size > 0 && (
-                    <div style={{ padding: '8px 16px', background: 'var(--blue-bg)', fontSize: 12, color: 'var(--blue)', borderBottom: '1px solid var(--border)' }}>
-                      {selectedMsgs.size} messages selected — click "Test" on any rule to run it against these messages
-                    </div>
-                  )}
                   <table style={{ width: '100%' }}>
                     <thead>
                       <tr>
@@ -848,8 +862,12 @@ export default function SmsPage() {
                             </div>
                           </td>
                           <td style={{ padding: '8px 12px' }}>
-                            <span className="badge badge-blue" style={{ fontSize: 11 }}>{ACTION_LABELS[r.action] ?? r.action}</span>
-                            {r.reply_text && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>"{r.reply_text.slice(0, 40)}…"</div>}
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                              {(r.actions && r.actions.length > 0 ? r.actions : [r.action]).map(a => (
+                                <span key={a} className="badge badge-blue" style={{ fontSize: 11 }}>{ACTION_LABELS[a] ?? a}</span>
+                              ))}
+                            </div>
+                            {r.reply_text && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>&quot;{r.reply_text.slice(0, 40)}…&quot;</div>}
                           </td>
                           <td style={{ padding: '8px 12px' }}>
                             <button onClick={() => toggleRule(r.id, r.enabled)}
@@ -860,14 +878,8 @@ export default function SmsPage() {
                           <td style={{ padding: '8px 12px' }}>
                             <div style={{ display: 'flex', gap: 5 }}>
                               <button className="btn-secondary btn-sm" onClick={() => startEdit(r)}>Edit</button>
-                              <button className="btn-secondary btn-sm" style={{ color: 'var(--blue)' }} onClick={() => testRule(r)} disabled={testingRule === r.id}>
-                                {testingRule === r.id ? <span className="spinner" /> : '▶ Test'}
-                              </button>
                               <button className="btn-danger btn-sm" style={{ fontSize: 11 }} onClick={() => deleteRule(r.id)}>Del</button>
                             </div>
-                            {testResult?.ruleId === r.id && (
-                              <div style={{ fontSize: 10, marginTop: 4, color: testResult.ok ? 'var(--green)' : 'var(--red)' }}>{testResult.text}</div>
-                            )}
                           </td>
                         </tr>
                       ))}
