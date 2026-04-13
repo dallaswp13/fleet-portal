@@ -186,9 +186,33 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
 
 /* Spinner */
 @keyframes spin { to { transform: rotate(360deg); } }
-.spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
-.spinner-lg { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+.spinner { display: inline-block; flex-shrink: 0; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+.spinner-lg { display: inline-block; flex-shrink: 0; width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
 .page-loading { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; min-height: 300px; color: var(--text3); font-size: 13px; }
+
+/* Skeleton loaders (for data loading — not button/action spinners) */
+@keyframes skeleton-pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+.skeleton {
+  display: block;
+  background: linear-gradient(90deg, var(--bg3) 0%, var(--bg4) 50%, var(--bg3) 100%);
+  background-size: 200% 100%;
+  border-radius: var(--radius-md, 6px);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+.skeleton-text { height: 12px; width: 100%; border-radius: 4px; }
+.skeleton-text-sm { height: 10px; width: 60%; border-radius: 4px; }
+.skeleton-line { height: 14px; width: 100%; border-radius: 4px; margin: 6px 0; }
+.skeleton-row  { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.skeleton-row > .skeleton { height: 14px; }
+.skeleton-card { padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg, 8px); background: var(--bg2); }
+.skeleton-avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; }
+.skeleton-stack { display: flex; flex-direction: column; gap: 8px; }
+.skeleton-table { display: flex; flex-direction: column; gap: 0; padding: 0 16px; }
+.skeleton-table .skeleton-row:last-child { border-bottom: none; }
 
 /* Divider */
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }

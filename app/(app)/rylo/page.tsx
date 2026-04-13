@@ -356,7 +356,15 @@ export default function RyloTrackerPage() {
       </div>
 
       {loading ? (
-        <div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" style={{ width: 24, height: 24 }} /></div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[0,1,2,3,4].map(i => (
+            <div key={i} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'center' }}>
+              <span className="skeleton" style={{ width: 70, height: 18 }} />
+              <span className="skeleton skeleton-text" style={{ flex: 1 }} />
+              <span className="skeleton" style={{ width: 90, height: 14 }} />
+            </div>
+          ))}
+        </div>
       ) : displayed.length === 0 ? (
         <div className="card" style={{ padding: '24px', textAlign: 'center', color: 'var(--text3)', fontSize: 13 }}>
           {tab === 'open' ? 'No open issues.' : 'No resolved issues yet.'}

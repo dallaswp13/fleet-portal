@@ -70,7 +70,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
 
   return (
     <div className="page-content">
-      <Suspense fallback={<div style={{ padding: 48, textAlign: 'center' }}><span className="spinner" /></div>}>
+      <Suspense fallback={<div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>{Array.from({ length: 12 }).map((_, i) => (<div key={i} className="card" style={{ padding: 14, display: 'flex', gap: 12, alignItems: 'center' }}><span className="skeleton skeleton-avatar" style={{ width: 48, height: 48 }} /><div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}><span className="skeleton skeleton-text" style={{ width: '70%' }} /><span className="skeleton skeleton-text-sm" style={{ width: '50%' }} /></div></div>))}</div>}>
         <DriversGrid
           drivers={(drivers ?? []) as Record<string, unknown>[]}
           page={page}

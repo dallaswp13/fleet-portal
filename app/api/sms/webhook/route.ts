@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHmac, timingSafeEqual } from 'crypto'
 import { createServiceClient } from '@/lib/supabase/server'
 import { processInboundSms } from '@/lib/smsProcess'
 
@@ -28,6 +29,45 @@ const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response/>'
 const xmlResponse = (body = EMPTY_TWIML, status = 200) =>
   new NextResponse(body, { status, headers: { 'Content-Type': 'text/xml' } })
 
+/**
+ * Verify Twilio webhook signature.
+ *
+ * Twilio signs requests with HMAC-SHA1(authToken, url + sorted-concatenated-params)
+ * and sends the base64 digest in the `X-Twilio-Signature` header.
+ * Reference: https://www.twilio.com/docs/usage/webhooks/webhooks-security
+ *
+ * Returns true if the signature is valid (or if verification is disabled
+ * because TWILIO_AUTH_TOKEN is unset — allows local dev).
+ */
+function verifyTwilioSignature(
+  url: string,
+  params: Record<string, string>,
+  signature: string | null,
+  authToken: string,
+): boolean {
+  if (!signature) return false
+  const sortedKeys = Object.keys(params).sort()
+  const payload = url + sortedKeys.map(k => k + params[k]).join('')
+  const expected = createHmac('sha1', authToken).update(payload).digest('base64')
+  const a = Buffer.from(expected)
+  const b = Buffer.from(signature)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * Build the exact URL Twilio used to sign the request. In production Twilio
+ * sees the public deployment URL which may differ from req.url (behind a
+ * proxy/load balancer). Prefer X-Forwarded-* headers if present.
+ */
+function reconstructSignedUrl(req: NextRequest): string {
+  const proto = req.headers.get('x-forwarded-proto') ?? 'https'
+  const host  = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? ''
+  const path  = new URL(req.url).pathname
+  const query = new URL(req.url).search
+  return `${proto}://${host}${path}${query}`
+}
+
 export async function GET() {
   // Health check — visit in browser to verify routing
   return NextResponse.json({
@@ -44,6 +84,30 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('[twilio-webhook] failed to parse form body:', err)
     return xmlResponse()
+  }
+
+  // ── Signature verification ────────────────────────────────────────────────
+  // Twilio signs every webhook with the configured auth token. Reject any
+  // request whose signature doesn't match to prevent spoofed inbound messages
+  // triggering auto-replies or M360 actions. Verification is skipped only if
+  // TWILIO_AUTH_TOKEN is unset (local dev) or the escape hatch
+  // TWILIO_SKIP_SIGNATURE=1 is set.
+  const authToken  = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const skipVerify = process.env.TWILIO_SKIP_SIGNATURE === '1'
+  if (authToken && !skipVerify) {
+    const params: Record<string, string> = {}
+    formData.forEach((v, k) => { params[k] = typeof v === 'string' ? v : '' })
+    const url = reconstructSignedUrl(req)
+    const sig = req.headers.get('x-twilio-signature')
+    const ok  = verifyTwilioSignature(url, params, sig, authToken)
+    if (!ok) {
+      console.warn('[twilio-webhook] signature verification FAILED', {
+        url, hasSig: !!sig, sid: formData.get('MessageSid')?.toString(),
+      })
+      return new NextResponse('Forbidden', { status: 403 })
+    }
+  } else if (!authToken) {
+    console.warn('[twilio-webhook] TWILIO_AUTH_TOKEN unset — signature verification disabled (dev only)')
   }
 
   const from       = formData.get('From')?.toString() ?? ''

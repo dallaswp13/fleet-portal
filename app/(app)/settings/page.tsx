@@ -4,6 +4,7 @@ import UpdateDBContent from '@/components/UpdateDBContent'
 import UserManager from '@/components/UserManager'
 import InvoiceGenerator from '@/components/InvoiceGenerator'
 import ExportDataPanel from '@/components/ExportDataPanel'
+import FleetReconcile from '@/components/FleetReconcile'
 
 const PER_PAGE = 50
 
@@ -50,10 +51,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { key: 'audit',   label: '📋 Audit Log'  },
     { key: 'roadmap', label: '🗺️ Roadmap'    },
     ...(canManageUsers ? [
-      { key: 'db',      label: '⬆️ Update Database' },
-      { key: 'export',  label: '📤 Export Data' },
-      { key: 'users',   label: '👥 Manage Users'     },
-      { key: 'invoice', label: '🧾 Generate Invoice'  },
+      { key: 'db',        label: '⬆️ Update Database' },
+      { key: 'reconcile', label: '🔄 Reconcile Fleet' },
+      { key: 'export',    label: '📤 Export Data' },
+      { key: 'users',     label: '👥 Manage Users'     },
+      { key: 'invoice',   label: '🧾 Generate Invoice'  },
     ] : []),
   ]
 
@@ -122,6 +124,12 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
       {/* ── UPDATE DATABASE ── */}
       {tab === 'db' && <UpdateDBContent />}
+
+      {/* ── FLEET RECONCILE ── */}
+      {tab === 'reconcile' && canManageUsers && <FleetReconcile />}
+      {tab === 'reconcile' && !canManageUsers && (
+        <div className="alert alert-error">You do not have permission to reconcile the fleet.</div>
+      )}
 
       {/* ── USER MANAGEMENT ── */}
       {tab === 'users' && canManageUsers && (

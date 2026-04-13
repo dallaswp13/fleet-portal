@@ -143,7 +143,7 @@ export default function UserManager({ currentUserEmail }: { currentUserEmail: st
       </div>
 
       {/* User list */}
-      {loading ? <div style={{ padding: 32, textAlign: 'center' }}><span className="spinner" /></div> : (
+      {loading ? <div className="card" style={{ padding: '6px 16px' }}>{[0,1,2,3,4].map(i => (<div key={i} style={{ display: 'flex', gap: 12, padding: '10px 0', borderBottom: i < 4 ? '1px solid var(--border)' : 'none', alignItems: 'center' }}><span className="skeleton skeleton-avatar" style={{ width: 28, height: 28 }} /><span className="skeleton skeleton-text" style={{ flex: 1 }} /><span className="skeleton" style={{ width: 70, height: 14 }} /><span className="skeleton" style={{ width: 90, height: 14 }} /></div>))}</div> : (
         <div className="card">
           <table>
             <thead>

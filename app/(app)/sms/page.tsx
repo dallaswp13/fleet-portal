@@ -546,8 +546,16 @@ export default function SmsPage() {
         {/* Conversations List */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {loadingMsgs ? (
-            <div style={{ padding: 24, textAlign: 'center' }}>
-              <span className="spinner" style={{ width: 20, height: 20 }} />
+            <div style={{ padding: '4px 0' }}>
+              {[0,1,2,3,4,5].map(i => (
+                <div key={i} style={{ display: 'flex', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--border)', alignItems: 'center' }}>
+                  <span className="skeleton skeleton-avatar" style={{ width: 36, height: 36 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span className="skeleton skeleton-text" style={{ width: '50%' }} />
+                    <span className="skeleton skeleton-text-sm" style={{ width: '80%' }} />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filteredConversations.length === 0 ? (
             <div style={{ padding: '20px 12px', textAlign: 'center', fontSize: 12, color: 'var(--text3)' }}>

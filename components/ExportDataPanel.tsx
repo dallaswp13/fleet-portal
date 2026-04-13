@@ -70,7 +70,15 @@ export default function ExportDataPanel() {
     return acc
   }, {})
 
-  if (loading) return <div style={{ padding: 32, textAlign: 'center' }}><span className="spinner" style={{ width: 20, height: 20 }} /></div>
+  if (loading) return (
+    <div style={{ maxWidth: 700 }}>
+      <span className="skeleton" style={{ display: 'block', width: 200, height: 18, marginBottom: 10 }} />
+      <span className="skeleton skeleton-text-sm" style={{ width: 320, marginBottom: 20 }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {[0,1,2,3].map(i => <span key={i} className="skeleton" style={{ height: 36 }} />)}
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ maxWidth: 700 }}>

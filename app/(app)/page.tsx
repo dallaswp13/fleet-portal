@@ -31,6 +31,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     return q
   }
 
+  // Resolve the vehicle_name_keys in scope for the office/tab filter so we can
+  // count devices by name_key (one vehicle has 2 devices: driver + PIM, each as
+  // a distinct row in `devices`). Counting through `fleet_overview` instead
+  // undercounts by 2x because that view is one row per vehicle.
+  let deviceNameKeys: string[] | null = null
+  if (fleetIds !== null || !allTabs) {
+    let vq = supabase.from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
+    if (fleetIds !== null) {
+      if (fleetIds.length === 0) vq = vq.eq('vehicle_number', -1)
+      else vq = vq.in('fleet_id', fleetIds)
+    }
+    if (!allTabs) vq = vq.in('sheet_tab', tabs)
+    const { data: vehs } = await vq
+    deviceNameKeys = (vehs ?? []).map(v => v.vehicle_name_key as string)
+  }
+
   const [
     { count: totalVehicles },
     { count: online },
@@ -52,14 +68,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     vehicleQuery().ilike('online_status', 'Online%'),
     vehicleQuery().ilike('online_status', 'Offline%'),
     vehicleQuery().not('online_status', 'ilike', 'Online%').not('online_status', 'ilike', 'Offline%'),
-    // Devices: count distinct devices linked to vehicles in the selected offices
+    // Devices: count rows directly from `devices` so both driver and PIM
+    // tablets are included. When an office/tab filter is active, restrict
+    // by the in-scope vehicle_name_keys; otherwise count every device.
     (() => {
-      let q = supabase.from('fleet_overview').select('device_id', { count: 'exact', head: true }).not('device_id', 'is', null)
-      if (fleetIds !== null) {
-        if (fleetIds.length === 0) q = q.eq('vehicle_number', -1)
-        else q = q.in('fleet_id', fleetIds)
+      const q = supabase.from('devices').select('*', { count: 'exact', head: true })
+      if (deviceNameKeys !== null) {
+        if (deviceNameKeys.length === 0) return q.eq('name_key', '___NO_MATCH___')
+        return q.in('name_key', deviceNameKeys)
       }
-      if (!allTabs) q = q.in('sheet_tab', tabs)
       return q
     })(),
     // Verizon lines filtered by office

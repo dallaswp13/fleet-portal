@@ -355,7 +355,13 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
           {tab === 'driver' && (
             <div>
               {driver === undefined ? (
-                <div style={{ textAlign: 'center', padding: 32 }}><span className="spinner" /></div>
+                <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', padding: '16px 18px', marginBottom: 20, display: 'flex', gap: 14, alignItems: 'center' }}>
+                  <span className="skeleton skeleton-avatar" style={{ width: 56, height: 56 }} />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <span className="skeleton skeleton-text" style={{ width: '40%' }} />
+                    <span className="skeleton skeleton-text-sm" style={{ width: '25%' }} />
+                  </div>
+                </div>
               ) : driver ? (
                 <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', padding: '16px 18px', marginBottom: 20, display: 'flex', gap: 14, alignItems: 'center' }}>
                   {driver.image_url
@@ -407,7 +413,16 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
           {/* MESSAGES */}
           {tab === 'messages' && (
             <div>
-              {loadingSms ? <div style={{ textAlign: 'center', padding: 32 }}><span className="spinner" /></div>
+              {loadingSms ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[0,1,2].map(i => (
+                    <div key={i} style={{ paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+                      <span className="skeleton skeleton-text-sm" style={{ width: '30%', marginBottom: 6 }} />
+                      <span className="skeleton" style={{ height: 38, width: '100%' }} />
+                    </div>
+                  ))}
+                </div>
+              )
                 : !smsLog || smsLog.length === 0
                   ? <div className="alert alert-warning">No messages linked to this vehicle. Messages from a driver&apos;s personal phone will appear here once associated via the Inbox.</div>
                   : smsLog.map((m, i) => (
