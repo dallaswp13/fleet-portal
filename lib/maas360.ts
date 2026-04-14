@@ -4,7 +4,7 @@
  * All requests use Content-Type: application/xml and parse XML responses.
  * The MaaS360 credentials are registered for XML applications.
  *
- * Auth:   POST /auth-apis/auth/1.0/authenticate/{billingID}
+ * Auth:   POST /auth-apis/auth/2.0/authenticate/customer/{billingID}
  * Action: GET  /actionapis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceId}
  * Search: GET  /device-apis/devices/1.0/search/{billingID}
  *
@@ -139,7 +139,11 @@ async function getAuthToken(): Promise<string> {
     '</authRequest>',
   ].join('\n')
 
-  const res = await fetch(`${BASE_URL}/auth-apis/auth/1.0/authenticate/${BILLING_ID}`, {
+  // Auth 2.0 endpoint — supports script-only accounts and returns refresh tokens
+  const authUrl = `${BASE_URL}/auth-apis/auth/2.0/authenticate/customer/${BILLING_ID}`
+  console.log(`[maas360] Authenticating via Auth 2.0: ${authUrl} (user=${USERNAME}, appID=${APP_ID})`)
+
+  const res = await fetch(authUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/xml', 'Accept': 'application/xml' },
     body: xmlBody,
@@ -152,10 +156,25 @@ async function getAuthToken(): Promise<string> {
   // Response may come as <authResponse> at top level or nested
   const authResponse = (data?.authResponse ?? data) as Record<string, unknown>
 
-  if (!res.ok) {
-    const code = authResponse?.errorCode
-    const desc = authResponse?.errorDesc ?? text.slice(0, 300)
-    throw new Error(`MaaS360 auth failed (HTTP ${res.status}): ${desc} [code ${code}]\nCredentials: billingID=${BILLING_ID}, appID=${APP_ID}, user=${USERNAME}`)
+  // M360 can return HTTP 200 with an error payload — check the body too
+  const errCode = authResponse?.errorCode
+  const errDesc = authResponse?.errorDesc
+
+  if (!res.ok || (errCode && Number(errCode) !== 0)) {
+    const credInfo = [
+      `billingID=${BILLING_ID}`,
+      `appID=${APP_ID}`,
+      `user=${USERNAME}`,
+      `accessKey=${ACCESS_KEY ? ACCESS_KEY.slice(0, 4) + '…(' + ACCESS_KEY.length + ')' : '(empty)'}`,
+      `password=${PASSWORD ? '(' + PASSWORD.length + ' chars)' : '(empty)'}`,
+      `platformID=${PLATFORM_ID}`,
+      `baseUrl=${BASE_URL}`,
+    ].join(', ')
+    throw new Error(
+      `MaaS360 auth failed (HTTP ${res.status}): ${errDesc ?? text.slice(0, 300)} [code ${errCode}]\n` +
+      `Auth URL: ${authUrl}\n` +
+      `Credentials: ${credInfo}`
+    )
   }
 
   const token = (authResponse?.authToken as string | undefined)
