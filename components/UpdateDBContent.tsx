@@ -44,13 +44,27 @@ export default function UpdateDBContent() {
 
   const uploadFile = useCallback(async (idx: number, filesList: FileState[]) => {
     const fs = filesList[idx]
-    setFileState(idx, { status: 'uploading', pct: 0, stage: 'starting' })
-
-    const fd = new FormData()
-    fd.append('file', fs.file)
+    setFileState(idx, { status: 'uploading', pct: 0, stage: 'compressing' })
 
     try {
-      const res = await fetch('/api/import', { method: 'POST', body: fd })
+      // Compress file with gzip to stay under Vercel's 4.5 MB payload limit.
+      // A 4+ MB XLSX compresses to ~1-2 MB with gzip.
+      let body: Blob | File = fs.file
+      let encoding = ''
+      if (typeof CompressionStream !== 'undefined') {
+        const stream = fs.file.stream().pipeThrough(new CompressionStream('gzip'))
+        body = await new Response(stream).blob()
+        encoding = 'gzip'
+      }
+
+      setFileState(idx, { status: 'uploading', pct: 0, stage: 'uploading' })
+
+      const headers: Record<string, string> = {
+        'X-Filename': encodeURIComponent(fs.file.name),
+      }
+      if (encoding) headers['Content-Encoding'] = encoding
+
+      const res = await fetch('/api/import', { method: 'POST', body, headers })
 
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => 'Unknown error')

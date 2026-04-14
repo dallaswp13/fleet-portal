@@ -298,13 +298,25 @@ async function executeAction(deviceId: string, actionType: string, additionalPar
 
   const { ok, parsed, rawText } = await m360Fetch(url, token, 'POST', JSON.stringify(jsonBody), 'json')
 
-  if (ok && !isTokenExpiredResponse(parsed)) {
-    console.log(`[maas360] executeAction success:`, JSON.stringify(parsed).slice(0, 300))
-    return { success: true, raw: parsed }
+  // V2 returns JSON — try parsing as JSON if XML parser returned empty/junk
+  let responseData: Record<string, unknown> = parsed
+  if ((!parsed || Object.keys(parsed).length === 0 || parsed._rawText) && rawText) {
+    try {
+      responseData = JSON.parse(rawText) as Record<string, unknown>
+    } catch {
+      responseData = { _rawText: rawText.slice(0, 500) }
+    }
+  }
+
+  console.log(`[maas360] executeAction response: ok=${ok}, status rawText=${rawText.slice(0, 300)}`)
+
+  if (ok && !isTokenExpiredResponse(responseData)) {
+    console.log(`[maas360] executeAction success:`, JSON.stringify(responseData).slice(0, 300))
+    return { success: true, raw: responseData }
   }
 
   console.warn(`[maas360] executeAction failed: ${rawText.slice(0, 400)}`)
-  return { success: false, raw: parsed }
+  return { success: false, raw: { ...responseData, _httpOk: ok, _rawText: rawText.slice(0, 500) } }
 }
 
 export async function rebootDevice(deviceId: string): Promise<{ success: boolean; raw: unknown }> {

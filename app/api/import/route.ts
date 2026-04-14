@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
+import { gunzipSync } from 'node:zlib'
 
 // Vercel serverless function timeout — 60s on Pro, 10s on Hobby
 export const maxDuration = 60
@@ -402,9 +403,27 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const formData = await req.formData()
-  const file     = formData.get('file') as File | null
-  if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
+  // Support two upload formats:
+  // 1. Gzip binary body with X-Filename header (new — avoids Vercel 4.5 MB payload limit)
+  // 2. Legacy FormData multipart (fallback for smaller files or older clients)
+  let fileName: string
+  let fileBuffer: ArrayBuffer
+
+  const xFilename = req.headers.get('x-filename')
+  if (xFilename) {
+    // Gzip binary upload path
+    fileName = decodeURIComponent(xFilename)
+    const raw = await req.arrayBuffer()
+    const isGzipped = req.headers.get('content-encoding') === 'gzip'
+    fileBuffer = isGzipped ? gunzipSync(Buffer.from(raw)).buffer as ArrayBuffer : raw
+  } else {
+    // Legacy FormData path
+    const formData = await req.formData()
+    const file = formData.get('file') as File | null
+    if (!file) return NextResponse.json({ error: 'No file uploaded' }, { status: 400 })
+    fileName = fileName
+    fileBuffer = await file.arrayBuffer()
+  }
 
   // Use a ReadableStream to send progress events as NDJSON lines
   const encoder = new TextEncoder()
@@ -416,20 +435,20 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        send({ type: 'start', filename: file.name })
+        send({ type: 'start', filename: fileName })
 
-        const buffer = await file.arrayBuffer()
-        const isXlsx = file.name.toLowerCase().endsWith('.xlsx')
+        const buffer = fileBuffer
+        const isXlsx = fileName.toLowerCase().endsWith('.xlsx')
         // decodeTextFile() handles UTF-16 BOM (Tableau quirk) + UTF-8 fallback
         const text   = isXlsx ? '' : decodeTextFile(buffer)
-        const type   = detectType(file.name, text)
+        const type   = detectType(fileName, text)
 
         if (!type) {
-          send({ type: 'error', error: `Could not identify file type for "${file.name}". Expected CCSI.xlsx, Active Drivers.xlsx, Driver Report.csv, View_All_Devices.csv, or account_unbilled_usage_report.csv` })
+          send({ type: 'error', error: `Could not identify file type for "${fileName}". Expected CCSI.xlsx, Active Drivers.xlsx, Driver Report.csv, View_All_Devices.csv, or account_unbilled_usage_report.csv` })
           controller.close(); return
         }
 
-        send({ type: 'progress', stage: 'parsing', message: `Parsing ${file.name}…`, pct: 5 })
+        send({ type: 'progress', stage: 'parsing', message: `Parsing ${fileName}…`, pct: 5 })
 
         let records: Record<string, unknown>[] = []
         let message = ''
@@ -442,7 +461,7 @@ export async function POST(req: NextRequest) {
             send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
           })
           send({ type: 'done', total: driverRecs.length, message: `Imported ${driverRecs.length} drivers` })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_drivers', targetType: 'device', targetId: file.name, payload: { filename: file.name }, result: { total: driverRecs.length }, success: true })
+          await writeAuditLog({ userEmail: user.email!, action: 'import_drivers', targetType: 'device', targetId: fileName, payload: { filename: fileName }, result: { total: driverRecs.length }, success: true })
           controller.close(); return
         } else if (type === 'driver_report') {
           // Tableau Driver Report → drivers (license, address, personal phone)
@@ -455,7 +474,7 @@ export async function POST(req: NextRequest) {
             const pct = 15 + Math.round((done / total) * 80)
             send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
           })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_driver_report', targetType: 'device', targetId: file.name, payload: { filename: file.name, size: file.size }, result: { total: drvRecs.length }, success: true })
+          await writeAuditLog({ userEmail: user.email!, action: 'import_driver_report', targetType: 'device', targetId: fileName, payload: { filename: fileName, size: fileBuffer.byteLength }, result: { total: drvRecs.length }, success: true })
           send({ type: 'done', total: drvRecs.length, message: `Imported ${drvRecs.length} driver-report rows (license, phone, address)` })
           controller.close(); return
         } else if (type === 'ccsi') {
@@ -489,8 +508,8 @@ export async function POST(req: NextRequest) {
           userEmail:  user.email!,
           action:     `import_${type}`,
           targetType: 'device',
-          targetId:   file.name,
-          payload:    { filename: file.name, size: file.size, counts },
+          targetId:   fileName,
+          payload:    { filename: fileName, size: fileBuffer.byteLength, counts },
           result:     { total: records.length },
           success:    true,
         })
@@ -504,7 +523,7 @@ export async function POST(req: NextRequest) {
           userEmail:  user?.email ?? 'unknown',
           action:     'import_unknown',
           targetType: 'device',
-          targetId:   file.name,
+          targetId:   fileName,
           result:     { error: message },
           success:    false,
         }).catch(() => {})
