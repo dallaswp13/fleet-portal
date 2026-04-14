@@ -17,6 +17,12 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr'],
   },
+
+  // Force the Claude playbook to be bundled with API route lambdas. Next.js
+  // won't detect the `readFileSync` at build time, so we include it explicitly.
+  outputFileTracingIncludes: {
+    '/api/sms/webhook': ['./lib/claude-playbook.md'],
+  },
 }
 
 export default nextConfig

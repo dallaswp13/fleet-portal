@@ -13,6 +13,8 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { sendSms, isTwilioConfigured, getTwilioNumber, getMessagingServiceSid } from '@/lib/twilio'
 import { ASC_FLEETS } from '@/lib/filters'
 
@@ -367,6 +369,27 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
 //     contextually aware (e.g. "Hi John, for vehicle #4021…").
 //   * Detects driver's language and instructs Claude to reply in kind.
 
+/**
+ * Load the editable playbook document that defines Claude's training.
+ * Cached on first read — in Vercel/Next.js this survives for the lifetime
+ * of the lambda, which is ideal since the file is only updated via deploy.
+ *
+ * Returns empty string if the file can't be read so the bot still works
+ * with the minimal baseline prompt below.
+ */
+let _cachedPlaybook: string | null = null
+function loadPlaybook(): string {
+  if (_cachedPlaybook !== null) return _cachedPlaybook
+  try {
+    const path = join(process.cwd(), 'lib', 'claude-playbook.md')
+    _cachedPlaybook = readFileSync(path, 'utf8')
+  } catch (err) {
+    console.warn('[smsProcess] could not read claude-playbook.md — using baseline prompt only:', err)
+    _cachedPlaybook = ''
+  }
+  return _cachedPlaybook
+}
+
 const CONVERSATION_SYSTEM_PROMPT = `You are an AI IT support assistant for LA Yellow Cab's fleet.
 
 You are texting with a taxi driver who is having trouble with their in-vehicle equipment. Your job is to help them resolve the issue on their own, or to confirm their request has been received so a human can follow up.
@@ -538,7 +561,12 @@ async function generateDriverReply(
     ? `\n\n# Past mistakes to avoid (lessons from Dallas, the fleet manager)\nThese are corrections Dallas left on previous Claude replies. Do NOT repeat these mistakes:\n${lessons.map((l, i) => `${i + 1}. ${l}`).join('\n')}`
     : ''
 
-  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + contextBlock + lessonsBlock
+  // Playbook is the primary training document — prepended so it's the first
+  // thing Claude sees after the baseline prompt.
+  const playbook = loadPlaybook()
+  const playbookBlock = playbook ? `\n\n# Playbook (editable — source of truth)\n${playbook}` : ''
+
+  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock
 
   // Build message list from history, then append current user message.
   const messages: { role: 'user' | 'assistant'; content: string }[] = history
