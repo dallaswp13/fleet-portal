@@ -5,9 +5,11 @@
  * The MaaS360 credentials are registered for XML applications.
  *
  * Auth:   POST /auth-apis/auth/1.0/authenticate/{billingID}
- * Reboot: POST /device-apis/devices/2.0/reboot/customer/{billingID}/device/{deviceId}
- * Other:  POST /device-apis/devices/1.0/{billingID}/sendAction
- * Search: GET  /device-apis/devices/2.0/search/customer/{billingID}
+ * Action: GET  /actionapis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceId}
+ * Search: GET  /device-apis/devices/1.0/search/{billingID}
+ *
+ * Action types (from official docs):
+ *   MDM_AFW_REMOTE_REBOOT — Restart device (Android 7+, agent 5.65+)
  *
  * ENV VARS:
  *   MAAS360_BASE_URL, MAAS360_BILLING_ID, MAAS360_PLATFORM_ID
@@ -167,8 +169,19 @@ async function getAuthToken(): Promise<string> {
 
 /* ── Request helpers ──────────────────────────────────────────────────── */
 
-function authHeaders(token: string) {
-  return { 'Content-Type': 'application/xml', 'Accept': 'application/xml', 'Authorization': `MaaS token=${token}` }
+function authHeaders(token: string, method: 'GET' | 'POST' = 'POST') {
+  // IBM docs show: Authorization MaaS token="<value>" — quotes are required.
+  const headers: Record<string, string> = {
+    'Authorization': `MaaS token="${token}"`,
+  }
+  // Only set Content-Type and Accept for POST (XML body). GET requests (like
+  // device actions and searches) don't need them and some M360 endpoints may
+  // reject unexpected Content-Type on GETs.
+  if (method === 'POST') {
+    headers['Content-Type'] = 'application/xml'
+    headers['Accept'] = 'application/xml'
+  }
+  return headers
 }
 
 function isTokenExpiredResponse(parsed: Record<string, unknown>): boolean {
@@ -186,7 +199,8 @@ async function invalidateToken(): Promise<void> {
 }
 
 async function m360Fetch(url: string, token: string, method: string, body?: string): Promise<{ ok: boolean; parsed: Record<string, unknown>; rawText: string }> {
-  const opts: RequestInit = { method, headers: authHeaders(token) }
+  const httpMethod = (method.toUpperCase() === 'GET' ? 'GET' : 'POST') as 'GET' | 'POST'
+  const opts: RequestInit = { method, headers: authHeaders(token, httpMethod) }
   if (body) opts.body = body
   const res  = await fetch(url, opts)
   const text = await res.text()
@@ -209,7 +223,7 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 
     const freshToken = await getAuthToken()
     console.log(`[maas360] Got fresh token: ${freshToken.slice(0, 8)}… — retrying request.`)
-    const retryOpts: RequestInit = { method, headers: authHeaders(freshToken) }
+    const retryOpts: RequestInit = { method, headers: authHeaders(freshToken, httpMethod) }
     if (body) retryOpts.body = body
     const retryRes  = await fetch(url, retryOpts)
     const retryText = await retryRes.text()
@@ -228,33 +242,46 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 
 /* ── Device actions ───────────────────────────────────────────────────── */
 
-export async function rebootDevice(deviceId: string): Promise<{ success: boolean; raw: unknown }> {
+/**
+ * Execute a device action via the official M360 Action API.
+ *
+ * Official endpoint (from IBM/HCL docs):
+ *   GET /actionapis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceId}
+ *
+ * Sample: https://services.fiberlink.com/actionapis/actions/1.0/customer/1101234/action/MDM_AFW_REMOTE_REBOOT/device/a1b2c3
+ */
+async function executeAction(deviceId: string, actionType: string): Promise<{ success: boolean; raw: unknown }> {
   const { BASE_URL, BILLING_ID } = cfg()
-
-  // Force-clear any stale cached token before critical operations
-  // This ensures we start with a fresh token
-  await invalidateToken()
   const token = await getAuthToken()
-  console.log(`[maas360] rebootDevice: using fresh token ${token.slice(0, 8)}… for device ${deviceId}`)
 
-  // Try the dedicated reboot endpoint first (with an empty XML body)
-  const emptyBody = '<?xml version="1.0" encoding="UTF-8"?><rebootRequest />'
-  const { ok, parsed, rawText } = await m360Fetch(
-    `${BASE_URL}/device-apis/devices/2.0/reboot/customer/${BILLING_ID}/device/${deviceId}`,
-    token, 'POST', emptyBody
-  )
+  const url = `${BASE_URL}/actionapis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`
+  console.log(`[maas360] executeAction: ${actionType} on device ${deviceId} → ${url}`)
 
-  if (ok && !isTokenExpiredResponse(parsed)) return { success: true, raw: parsed }
+  const { ok, parsed, rawText } = await m360Fetch(url, token, 'GET')
 
-  // Fallback: use the generic sendAction endpoint with RestartDevice
-  console.warn(`[maas360] Dedicated reboot endpoint failed. Response: ${rawText.slice(0, 300)}. Trying sendAction fallback.`)
-  const fallback = await sendDeviceAction(deviceId, 'RestartDevice')
-  if (fallback.success) return fallback
+  if (ok && !isTokenExpiredResponse(parsed)) {
+    console.log(`[maas360] executeAction success:`, JSON.stringify(parsed).slice(0, 300))
+    return { success: true, raw: parsed }
+  }
 
-  // Return the original error with details for debugging
-  return { success: false, raw: { dedicatedEndpoint: parsed, sendActionFallback: fallback.raw, hint: 'Both reboot methods failed. Check device ID and M360 portal.' } }
+  console.warn(`[maas360] executeAction failed: ${rawText.slice(0, 400)}`)
+  return { success: false, raw: parsed }
 }
 
+export async function rebootDevice(deviceId: string): Promise<{ success: boolean; raw: unknown }> {
+  // Force-clear any stale cached token before critical operations
+  await invalidateToken()
+  await getAuthToken() // warm up fresh token — executeAction will use it
+
+  console.log(`[maas360] rebootDevice: MDM_AFW_REMOTE_REBOOT on device ${deviceId}`)
+  return executeAction(deviceId, 'MDM_AFW_REMOTE_REBOOT')
+}
+
+/**
+ * Legacy sendAction endpoint (kept for actions that may not have an
+ * actionapis equivalent yet). Uses the older XML-body format:
+ *   POST /device-apis/devices/1.0/{billingID}/sendAction
+ */
 const ACTION_MAP: Record<string, string> = {
   wipe: 'FactoryReset', kiosk_enter: 'EnableKioskMode', kiosk_exit: 'DisableKioskMode', clear_app_data: 'ClearAppData',
 }
@@ -303,7 +330,7 @@ export async function searchDeviceByName(deviceName: string): Promise<{ deviceId
   const { BASE_URL, BILLING_ID } = cfg()
   const token = await getAuthToken()
   const { parsed } = await m360Fetch(
-    `${BASE_URL}/device-apis/devices/2.0/search/customer/${BILLING_ID}?deviceName=${encodeURIComponent(deviceName)}&pageSize=5&pageNumber=1`,
+    `${BASE_URL}/device-apis/devices/1.0/search/${BILLING_ID}?deviceName=${encodeURIComponent(deviceName)}&pageSize=5&pageNumber=1`,
     token, 'GET'
   )
 
