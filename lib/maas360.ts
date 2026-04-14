@@ -5,7 +5,7 @@
  * The MaaS360 credentials are registered for XML applications.
  *
  * Auth:   POST /auth-apis/auth/2.0/authenticate/customer/{billingID}
- * Action: POST /action-apis/action-mgmt-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}  (V2, JSON body)
+ * Action: POST /action-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}  (V2, JSON body)
  * Search: GET  /device-apis/devices/1.0/search/{billingID}
  *
  * Action types (from official docs):
@@ -269,19 +269,19 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
  * Execute a device action via the M360 Device Actions V2 API.
  *
  * Official endpoint (from IBM/HCL docs, page 125):
- *   POST /action-apis/action-mgmt-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}
+ *   POST /action-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}
  *   Content-Type: application/json
  *   Authorization: MaaS token="<ADMIN_AUTH_MAAS_TOKEN>"
  *
  * Required JSON body: { name, expiryDate, requestorWorkflow }
  *
- * Sample: https://services.m3.maas360.com/action-apis/action-mgmt-apis/actions/1.0/customer/1101234/action/MDM_AFW_REMOTE_REBOOT/device/a1b2c3
+ * Sample: https://services.m3.maas360.com/action-apis/actions/1.0/customer/1101234/action/MDM_AFW_REMOTE_REBOOT/device/a1b2c3
  */
 async function executeAction(deviceId: string, actionType: string, additionalParams?: Record<string, unknown>): Promise<{ success: boolean; raw: unknown }> {
   const { BASE_URL, BILLING_ID } = cfg()
   const token = await getAuthToken()
 
-  const url = `${BASE_URL}/action-apis/action-mgmt-apis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`
+  const url = `${BASE_URL}/action-apis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`
 
   // V2 requires a JSON body with name, expiryDate (epoch ms), requestorWorkflow
   const jsonBody: Record<string, unknown> = {
