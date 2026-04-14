@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
   // Experimental: partial pre-rendering where possible
   experimental: {
     optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr'],
+    serverActions: {
+      bodySizeLimit: '10mb',
+    },
   },
 
   // Force the Claude playbook to be bundled with API route lambdas. Next.js

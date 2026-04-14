@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
 
+// Vercel serverless function timeout — 60s on Pro, 10s on Hobby
+export const maxDuration = 60
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!.replace(/\/$/, '')
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 

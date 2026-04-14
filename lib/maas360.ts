@@ -5,7 +5,7 @@
  * The MaaS360 credentials are registered for XML applications.
  *
  * Auth:   POST /auth-apis/auth/2.0/authenticate/customer/{billingID}
- * Action: GET  /actionapis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceId}
+ * Action: POST /action-apis/action-mgmt-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}  (V2, JSON body)
  * Search: GET  /device-apis/devices/1.0/search/{billingID}
  *
  * Action types (from official docs):
@@ -188,17 +188,21 @@ async function getAuthToken(): Promise<string> {
 
 /* ── Request helpers ──────────────────────────────────────────────────── */
 
-function authHeaders(token: string, method: 'GET' | 'POST' = 'POST') {
+function authHeaders(token: string, opts: { method?: 'GET' | 'POST'; contentType?: 'xml' | 'json' } = {}) {
+  const { method = 'POST', contentType = 'xml' } = opts
   // IBM docs show: Authorization MaaS token="<value>" — quotes are required.
   const headers: Record<string, string> = {
     'Authorization': `MaaS token="${token}"`,
   }
-  // Only set Content-Type and Accept for POST (XML body). GET requests (like
-  // device actions and searches) don't need them and some M360 endpoints may
-  // reject unexpected Content-Type on GETs.
+  // Only set Content-Type and Accept for POST. GET requests don't need them.
   if (method === 'POST') {
-    headers['Content-Type'] = 'application/xml'
-    headers['Accept'] = 'application/xml'
+    if (contentType === 'json') {
+      headers['Content-Type'] = 'application/json'
+      headers['Accept'] = 'application/json'
+    } else {
+      headers['Content-Type'] = 'application/xml'
+      headers['Accept'] = 'application/xml'
+    }
   }
   return headers
 }
@@ -217,9 +221,9 @@ async function invalidateToken(): Promise<void> {
   } catch { /* ignore */ }
 }
 
-async function m360Fetch(url: string, token: string, method: string, body?: string): Promise<{ ok: boolean; parsed: Record<string, unknown>; rawText: string }> {
+async function m360Fetch(url: string, token: string, method: string, body?: string, contentType: 'xml' | 'json' = 'xml'): Promise<{ ok: boolean; parsed: Record<string, unknown>; rawText: string }> {
   const httpMethod = (method.toUpperCase() === 'GET' ? 'GET' : 'POST') as 'GET' | 'POST'
-  const opts: RequestInit = { method, headers: authHeaders(token, httpMethod) }
+  const opts: RequestInit = { method, headers: authHeaders(token, { method: httpMethod, contentType }) }
   if (body) opts.body = body
   const res  = await fetch(url, opts)
   const text = await res.text()
@@ -242,7 +246,7 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 
     const freshToken = await getAuthToken()
     console.log(`[maas360] Got fresh token: ${freshToken.slice(0, 8)}… — retrying request.`)
-    const retryOpts: RequestInit = { method, headers: authHeaders(freshToken, httpMethod) }
+    const retryOpts: RequestInit = { method, headers: authHeaders(freshToken, { method: httpMethod, contentType }) }
     if (body) retryOpts.body = body
     const retryRes  = await fetch(url, retryOpts)
     const retryText = await retryRes.text()
@@ -262,21 +266,37 @@ async function m360Fetch(url: string, token: string, method: string, body?: stri
 /* ── Device actions ───────────────────────────────────────────────────── */
 
 /**
- * Execute a device action via the official M360 Action API.
+ * Execute a device action via the M360 Device Actions V2 API.
  *
- * Official endpoint (from IBM/HCL docs):
- *   GET /actionapis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceId}
+ * Official endpoint (from IBM/HCL docs, page 125):
+ *   POST /action-apis/action-mgmt-apis/actions/1.0/customer/{billingID}/action/{actionType}/device/{deviceCsn}
+ *   Content-Type: application/json
+ *   Authorization: MaaS token="<ADMIN_AUTH_MAAS_TOKEN>"
  *
- * Sample: https://services.fiberlink.com/actionapis/actions/1.0/customer/1101234/action/MDM_AFW_REMOTE_REBOOT/device/a1b2c3
+ * Required JSON body: { name, expiryDate, requestorWorkflow }
+ *
+ * Sample: https://services.m3.maas360.com/action-apis/action-mgmt-apis/actions/1.0/customer/1101234/action/MDM_AFW_REMOTE_REBOOT/device/a1b2c3
  */
-async function executeAction(deviceId: string, actionType: string): Promise<{ success: boolean; raw: unknown }> {
+async function executeAction(deviceId: string, actionType: string, additionalParams?: Record<string, unknown>): Promise<{ success: boolean; raw: unknown }> {
   const { BASE_URL, BILLING_ID } = cfg()
   const token = await getAuthToken()
 
-  const url = `${BASE_URL}/actionapis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`
-  console.log(`[maas360] executeAction: ${actionType} on device ${deviceId} → ${url}`)
+  const url = `${BASE_URL}/action-apis/action-mgmt-apis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`
 
-  const { ok, parsed, rawText } = await m360Fetch(url, token, 'GET')
+  // V2 requires a JSON body with name, expiryDate (epoch ms), requestorWorkflow
+  const jsonBody: Record<string, unknown> = {
+    name: actionType,
+    expiryDate: Date.now() + 24 * 60 * 60 * 1000, // 24h from now
+    requestorWorkflow: 'FLEET_PORTAL',
+  }
+  if (additionalParams) {
+    jsonBody.additionalParams = additionalParams
+  }
+
+  console.log(`[maas360] executeAction V2: POST ${actionType} on device ${deviceId} → ${url}`)
+  console.log(`[maas360] body: ${JSON.stringify(jsonBody)}`)
+
+  const { ok, parsed, rawText } = await m360Fetch(url, token, 'POST', JSON.stringify(jsonBody), 'json')
 
   if (ok && !isTokenExpiredResponse(parsed)) {
     console.log(`[maas360] executeAction success:`, JSON.stringify(parsed).slice(0, 300))
