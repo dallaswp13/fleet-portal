@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { rebootDevice, searchDeviceByName, testAuth } from '@/lib/maas360'
+import { testAuth } from '@/lib/maas360'
 
 /**
  * GET /api/maas360/test-action?deviceId=xxx
- * GET /api/maas360/test-action?deviceName=xxx  (search first, then reboot)
+ * GET /api/maas360/test-action?deviceId=xxx&execute=true
  *
- * Debug endpoint — returns full auth + action response for troubleshooting.
- * Admin only. Does NOT actually reboot unless ?execute=true is passed.
+ * Probes multiple URL patterns for the Device Actions V2 endpoint to find
+ * which one works on this M360 instance. Returns results for all patterns.
  */
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -16,57 +16,83 @@ export async function GET(req: NextRequest) {
 
   const url = new URL(req.url)
   const deviceId = url.searchParams.get('deviceId')
-  const deviceName = url.searchParams.get('deviceName')
   const execute = url.searchParams.get('execute') === 'true'
 
-  const results: Record<string, unknown> = { timestamp: new Date().toISOString() }
+  if (!deviceId) {
+    return NextResponse.json({ error: 'Provide ?deviceId=xxx' }, { status: 400 })
+  }
 
-  // Step 1: Test auth
+  // Step 1: Auth
+  let token: string
   try {
     const auth = await testAuth()
-    results.auth = auth
-    if (!auth.ok) {
-      return NextResponse.json({ ...results, error: 'Auth failed — cannot proceed' })
-    }
+    if (!auth.ok) return NextResponse.json({ auth, error: 'Auth failed' })
+    token = auth.message.match(/Token: (\S+)/)?.[1] ?? ''
+    if (!token) return NextResponse.json({ auth, error: 'Could not extract token' })
   } catch (err) {
-    results.auth = { ok: false, error: err instanceof Error ? err.message : String(err) }
-    return NextResponse.json({ ...results, error: 'Auth threw — cannot proceed' })
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) })
   }
 
-  // Step 2: Resolve device ID (by name if needed)
-  let resolvedDeviceId = deviceId
-  if (deviceName && !deviceId) {
+  const BASE_URL = process.env.MAAS360_BASE_URL?.replace(/\/$/, '') ?? 'https://services.m3.maas360.com'
+  const BILLING_ID = process.env.MAAS360_BILLING_ID ?? ''
+  const actionType = 'MDM_AFW_REMOTE_REBOOT'
+
+  // All URL patterns found in IBM docs (inconsistent across pages):
+  const patterns = [
+    `/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`,
+    `/action-apis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`,
+    `/action-apis/action-mgmt-apis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`,
+    `/actionapis/actions/1.0/customer/${BILLING_ID}/action/${actionType}/device/${deviceId}`,
+  ]
+
+  const jsonBody = JSON.stringify({
+    name: actionType,
+    expiryDate: Date.now() + 24 * 60 * 60 * 1000,
+    requestorWorkflow: 'FLEET_PORTAL',
+  })
+
+  const results: Record<string, unknown>[] = []
+
+  for (const path of patterns) {
+    const fullUrl = `${BASE_URL}${path}`
     try {
-      const search = await searchDeviceByName(deviceName)
-      results.search = search
-      resolvedDeviceId = search.deviceId
-      if (!resolvedDeviceId) {
-        return NextResponse.json({ ...results, error: `No device found for name: ${deviceName}` })
-      }
+      const res = await fetch(fullUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `MaaS token="${token}"`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: execute ? jsonBody : undefined,
+      })
+      const text = await res.text()
+      let parsed: unknown = text
+      try { parsed = JSON.parse(text) } catch { /* keep as text */ }
+
+      results.push({
+        path,
+        url: fullUrl,
+        method: execute ? 'POST (with body)' : 'POST (no body — dry probe)',
+        httpStatus: res.status,
+        response: parsed,
+      })
     } catch (err) {
-      results.search = { error: err instanceof Error ? err.message : String(err) }
-      return NextResponse.json({ ...results, error: 'Device search failed' })
+      results.push({
+        path,
+        url: fullUrl,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
   }
 
-  if (!resolvedDeviceId) {
-    return NextResponse.json({ ...results, error: 'Provide ?deviceId=xxx or ?deviceName=xxx' }, { status: 400 })
-  }
-
-  results.resolvedDeviceId = resolvedDeviceId
-
-  // Step 3: Execute reboot (only if ?execute=true)
-  if (!execute) {
-    results.note = 'Dry run — add &execute=true to actually send the reboot command'
-    return NextResponse.json(results)
-  }
-
-  try {
-    const reboot = await rebootDevice(resolvedDeviceId)
-    results.reboot = reboot
-  } catch (err) {
-    results.reboot = { success: false, error: err instanceof Error ? err.message : String(err) }
-  }
-
-  return NextResponse.json(results)
+  return NextResponse.json({
+    timestamp: new Date().toISOString(),
+    deviceId,
+    execute,
+    baseUrl: BASE_URL,
+    billingId: BILLING_ID,
+    actionType,
+    body: execute ? JSON.parse(jsonBody) : '(not sent — add &execute=true)',
+    results,
+  })
 }
