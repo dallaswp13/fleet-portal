@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { testAuth } from '@/lib/maas360'
+import { getAuthToken } from '@/lib/maas360'
 
 /**
- * GET /api/maas360/test-action?deviceId=xxx
  * GET /api/maas360/test-action?deviceId=xxx&execute=true
  *
  * Probes multiple URL patterns for the Device Actions V2 endpoint to find
@@ -22,15 +21,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Provide ?deviceId=xxx' }, { status: 400 })
   }
 
-  // Step 1: Auth
+  // Get a real auth token directly (not from testAuth display string)
   let token: string
   try {
-    const auth = await testAuth()
-    if (!auth.ok) return NextResponse.json({ auth, error: 'Auth failed' })
-    token = auth.message.match(/Token: (\S+)/)?.[1] ?? ''
-    if (!token) return NextResponse.json({ auth, error: 'Could not extract token' })
+    token = await getAuthToken()
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: `Auth failed: ${err instanceof Error ? err.message : String(err)}` })
   }
 
   const BASE_URL = process.env.MAAS360_BASE_URL?.replace(/\/$/, '') ?? 'https://services.m3.maas360.com'
@@ -71,15 +67,12 @@ export async function GET(req: NextRequest) {
 
       results.push({
         path,
-        url: fullUrl,
-        method: execute ? 'POST (with body)' : 'POST (no body — dry probe)',
         httpStatus: res.status,
         response: parsed,
       })
     } catch (err) {
       results.push({
         path,
-        url: fullUrl,
         error: err instanceof Error ? err.message : String(err),
       })
     }
@@ -89,9 +82,7 @@ export async function GET(req: NextRequest) {
     timestamp: new Date().toISOString(),
     deviceId,
     execute,
-    baseUrl: BASE_URL,
-    billingId: BILLING_ID,
-    actionType,
+    tokenPrefix: token.slice(0, 8),
     body: execute ? JSON.parse(jsonBody) : '(not sent — add &execute=true)',
     results,
   })

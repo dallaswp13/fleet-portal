@@ -100,7 +100,7 @@ function parseXml(text: string): Record<string, unknown> {
 
 /* ── Authentication ───────────────────────────────────────────────────── */
 
-async function getAuthToken(): Promise<string> {
+export async function getAuthToken(): Promise<string> {
   const now = Date.now()
 
   // 1. Fast path: in-memory cache (same serverless instance)
