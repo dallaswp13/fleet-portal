@@ -7,9 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 const mainNav = [
   { href: '/',          label: 'Dashboard',     icon: '◉'  },
   { href: '/actions',   label: 'Quick Actions',  icon: '⚡' },
-  { href: '/vehicles',  label: 'Vehicles',       icon: '🚕' },
-  { href: '/devices',   label: 'Devices',        icon: '📱' },
-  { href: '/lines',     label: 'Verizon',         icon: '📡' },
+  { href: '/fleet',     label: 'Fleet',           icon: '🚕' },
   { href: '/drivers',   label: 'Drivers',         icon: '🧑‍✈️' },
   { href: '/sms',       label: 'Inbox',            icon: '💬' },
   { href: '/rylo',      label: 'Rylo Tracker',     icon: '📋' },
@@ -53,13 +51,19 @@ export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isA
             if (item.href === '/sms' || item.href === '/rylo') return isAdmin
             return true
           })
-          .map(item => (
-            <Link key={item.href} href={item.href}
-              className={`nav-item ${pathname === item.href ? 'active' : ''}`}>
-              <span style={{ fontSize: 15 }}>{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
+          .map(item => {
+            // For /fleet, highlight on any /fleet/* sub-route (vehicles/devices/lines)
+            const isActive = item.href === '/'
+              ? pathname === '/'
+              : pathname === item.href || pathname?.startsWith(item.href + '/')
+            return (
+              <Link key={item.href} href={item.href}
+                className={`nav-item ${isActive ? 'active' : ''}`}>
+                <span style={{ fontSize: 15 }}>{item.icon}</span>
+                {item.label}
+              </Link>
+            )
+          })}
       </div>
 
       <div className="sidebar-section">

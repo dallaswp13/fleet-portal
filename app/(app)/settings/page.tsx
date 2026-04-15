@@ -156,60 +156,100 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {([
-              // ── ACTIVE / IN FLIGHT ────────────────────────────────────────
-              {
-                status: 'blocked', label: 'MaaS360 API — Command Execution',
-                detail: 'Authentication is working (token auth + keepalive stable). Device action commands (reboot, wipe, kiosk, clear app data) are returning errors from M360. Needs troubleshooting — likely an endpoint or XML payload format issue. Search and device lookup work; sendAction is the blocker.',
-              },
-              {
-                status: 'todo', label: 'Twilio SMS — Outbound Replies',
-                detail: 'Inbound via Gmail/Google Voice is working. Need to wire /api/sms/send to Twilio REST API for outbound replies from the Inbox, plus webhook endpoint for direct Twilio inbound. Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER in Vercel. Run migration 027 in Supabase first.',
-              },
+              // ── IN PROGRESS / TO DO ──────────────────────────────────────
               {
                 status: 'todo', label: 'Create Vehicle — M360 User Provisioning',
-                detail: 'Quick Action to provision a new cab: prompts for cab number + fleet, then creates two M360 users via API — driver (front group) and *pim (pim group). Depends on M360 command execution being unblocked.',
+                detail: 'Quick Action to provision a new cab end-to-end: prompts for cab number + fleet, creates two M360 users via API (driver in front group, *pim in pim group), pulls an available Verizon line, and writes the row to the vehicles table. API plumbing is unblocked — this is now UI + orchestration work.',
               },
               {
-                status: 'todo', label: 'Invite Users',
-                detail: 'Admin flow to invite teammates by email — sends Supabase magic-link invite, pre-assigns role (admin/viewer) and office scope. Replaces manual DB row creation in Manage Users.',
+                status: 'todo', label: 'Get Available Line — Quick Action',
+                detail: 'Surface the first available unassigned Verizon line for a given office/fleet and mark it as reserved for a cab. Uses the existing count_available_lines RPC — just needs a modal and an "assign to vehicle" write path.',
               },
               {
-                status: 'todo', label: 'Scheduled Maintenance Reminders',
-                detail: 'Auto-flag vehicles overdue for service based on last-service date and mileage. Surface as a Dashboard widget and daily digest email.',
+                status: 'todo', label: 'Bulk Actions on Fleet Tab',
+                detail: 'Multi-select checkboxes across the Fleet Vehicles and Devices views with bulk reboot, bulk kiosk toggle, bulk clear-dispatch, bulk export. Useful for end-of-shift sweeps and fleet-wide updates after an app rollout.',
               },
               {
-                status: 'todo', label: 'Automated Data Sync',
-                detail: 'Replace the four manual CSV/XLSX uploads (Fleet, Devices, Verizon, Drivers) with scheduled pulls directly from MaaS360, Verizon, and CCSI. Removes the weekly upload chore.',
+                status: 'todo', label: 'Inbox — Expand Beyond ASC',
+                detail: 'Inbox currently handles the ASC Twilio number only. Wire CYC, SDY, and DEN numbers through the same webhook pipeline with per-office routing so dispatchers for those fleets can use the same inbox.',
               },
               {
-                status: 'todo', label: 'Driver Lookup by Phone',
-                detail: 'When an SMS arrives from an unknown phone, attempt auto-match against the Drivers table (normalized phone). Pre-fills sender name and vehicle in the Inbox.',
+                status: 'todo', label: 'Inbound Voice Calls',
+                detail: 'Twilio voice webhook + call-routing UI: log inbound driver calls against their vehicle, with voicemail transcription via Claude and optional call-back from the Inbox. Extends SMS two-way comms to phone.',
               },
               {
-                status: 'todo', label: 'Bulk Actions',
-                detail: 'Multi-select on Vehicles and Devices pages with bulk reboot, bulk kiosk toggle, bulk export. Useful for end-of-shift or fleet-wide operations.',
+                status: 'todo', label: 'Stuck Message Monitoring',
+                detail: 'Dashboard alert when an inbound SMS has been in "Pending" state for > 15 minutes without being committed, executed, or explicitly ignored. Prevents driver requests from silently falling through the cracks when Claude is offline.',
               },
               {
                 status: 'todo', label: 'Issue Tracker — Full Page',
-                detail: 'Dashboard summary widget exists. Build out dedicated /issues page with create/edit/assign/resolve, filtering by priority and office, and linking to vehicles.',
+                detail: 'Dashboard summary widget exists. Build out dedicated /issues page with create/edit/assign/resolve, priority and office filtering, comment threads, and links to the affected vehicle or device.',
               },
               {
                 status: 'todo', label: 'Daily Snapshot Job',
-                detail: 'Populate daily_snapshots table (migration 028) via a cron at /api/cron/snapshot so the Fleet Trend chart shows live data instead of hardcoded Active Vehicle Tracker values.',
+                detail: 'Populate the daily_snapshots table via a cron at /api/cron/snapshot so the Fleet Trend chart shows live data instead of the hardcoded Active Vehicle Tracker values currently in the dashboard.',
+              },
+              {
+                status: 'todo', label: 'Scheduled Maintenance Reminders',
+                detail: 'Auto-flag vehicles overdue for service based on last-service date and mileage. Surface as a Dashboard widget and a daily digest email to office managers.',
+              },
+              {
+                status: 'todo', label: 'Inventory Reorder Triggers',
+                detail: 'Low-stock thresholds on the Inventory page that fire a Slack/email alert when a part or tablet spare drops below a configurable floor. Pairs with a simple reorder log to track open POs.',
+              },
+              {
+                status: 'todo', label: 'Driver Self-Service Portal',
+                detail: 'Lightweight driver-facing page (SMS magic link) to update name/phone/license expiry, view their current vehicle assignment, and flag maintenance issues without going through dispatch.',
+              },
+              {
+                status: 'todo', label: 'Driver Lookup by Phone',
+                detail: 'When an SMS arrives from an unknown phone, auto-match against the Drivers table (normalized phone). Pre-fills sender name and vehicle in the Inbox so dispatchers see context immediately.',
+              },
+              {
+                status: 'todo', label: 'Invite Users',
+                detail: 'Admin flow to invite teammates by email — sends a Supabase magic-link invite, pre-assigns role (admin/viewer) and office scope. Replaces manual DB row creation in Manage Users.',
+              },
+              {
+                status: 'todo', label: 'Automated Data Sync',
+                detail: 'Replace the four manual CSV/XLSX uploads (Fleet, Devices, Verizon, Drivers) with scheduled pulls directly from MaaS360, Verizon, and CCSI. Eliminates the weekly upload chore.',
+              },
+              {
+                status: 'todo', label: 'Audit Log Retention & Search',
+                detail: 'Audit log is growing quickly. Add a retention policy (trim > 180 days) plus a dedicated search/filter UI on the audit tab — filter by actor, action type, vehicle, and date range.',
+              },
+              {
+                status: 'todo', label: 'Mobile-Friendly Layout',
+                detail: 'Fleet, Inbox, and Quick Actions are usable on desktop only. Tighten breakpoints and add a collapsible sidebar so dispatchers can use the portal on a phone when walking the yard.',
               },
 
               // ── RECENTLY COMPLETED ────────────────────────────────────────
               {
-                status: 'done', label: 'Twilio SMS — Live',
-                detail: 'Inbound texts arrive via Twilio webhook at /api/sms/webhook. Rule-based auto-reply is live; "NoM" confirmed end-to-end 2026-04-13. Gmail/Google Voice polling fully removed.',
+                status: 'done', label: 'Fleet Tab Consolidation',
+                detail: 'Vehicles, Devices, and Verizon now live under a single /fleet section with sub-tabs. Sidebar simplified from 3 entries to 1; legacy /vehicles, /devices, /lines URLs redirect with query params intact.',
+              },
+              {
+                status: 'done', label: 'Quick Actions — Cleanup',
+                detail: 'Replace Driver Tablet and Surrender Vehicle cards removed. Remote Support reworked to deep-link into the M360 portal (TeamViewer launch) — the Webservices API does not expose a remote-control endpoint. Cards unified into a single grid, no more Working vs Pending split.',
+              },
+              {
+                status: 'done', label: 'MaaS360 API — Command Execution',
+                detail: 'Device action endpoints (reboot, wipe, kiosk, clear app data, clear dispatch, clear PIM BT) fully working end-to-end. XML transport + token keepalive stable. Used by both the Quick Actions buttons and the autonomous SMS pipeline.',
+              },
+              {
+                status: 'done', label: 'Twilio SMS — Live (Inbound + Outbound)',
+                detail: 'Inbound via Twilio webhook at /api/sms/webhook, outbound replies from the Inbox via the Twilio REST API. Rule-based auto-reply confirmed end-to-end 2026-04-13. Gmail/Google Voice polling fully removed.',
+              },
+              {
+                status: 'done', label: 'Claude Execute-Actions Kill Switch',
+                detail: 'Runtime flag (migration 034) gates autonomous Claude actions. Allow-list of non-destructive actions (reboot, clear_dispatch, clear_pim_bt, clear_app_data) — wipe and kiosk always require a human.',
               },
               {
                 status: 'done', label: 'Available Lines — DB-Side Filtering',
-                detail: 'Migration 025 applied. Available tab uses RPC for accurate counts on large datasets.',
+                detail: 'Migration 025 applied. Available tab uses the get_available_line_norms / count_available_lines RPCs for accurate counts on large datasets.',
               },
               {
                 status: 'done', label: 'Dashboard Widgets',
-                detail: 'SMS Activity Feed, Issue Tracker Summary, Verizon Usage Alerts, and Fleet Size Trend chart all live on the home dashboard.',
+                detail: 'SMS Activity Feed, Issue Tracker Summary, Verizon Usage Alerts, and Fleet Size Trend chart all live on the home dashboard. Device count fixed to include Surrendered tab scope.',
               },
               {
                 status: 'done', label: 'Top Bar Status Indicators',
@@ -217,7 +257,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               },
               {
                 status: 'done', label: 'Unassociated Devices View',
-                detail: 'Migration 029 added a NOT EXISTS view to handle 2000+ unassociated devices without hitting PostgREST URL length limits.',
+                detail: 'Migration 029 added a NOT EXISTS view so the Unassociated filter on /fleet/devices handles 2000+ orphans without hitting PostgREST URL length limits.',
               },
               {
                 status: 'done', label: 'SMS Inbox — Two-Way Chat UI',
@@ -225,23 +265,19 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               },
               {
                 status: 'done', label: 'SMS Translation',
-                detail: 'Non-English messages translated via Claude API at poll time (Spanish, Russian, Armenian, Farsi). Original + translation shown side-by-side in Inbox.',
+                detail: 'Non-English messages translated via Claude API at ingest (Spanish, Russian, Armenian, Farsi). Original + translation shown side-by-side in the Inbox.',
               },
               {
                 status: 'done', label: 'SMS Inbox — Commit & Execute',
-                detail: 'Messages parsed for intent and vehicle. Execute button fires M360 commands directly. Destructive actions require confirmation.',
+                detail: 'Messages parsed for intent and vehicle. Execute button fires M360 commands directly. Destructive actions require explicit confirmation.',
               },
               {
                 status: 'done', label: 'MaaS360 Auth + XML Transport',
                 detail: 'Auth working via XML transport with token cached in Supabase. Keepalive cron runs every 30 min to prevent 60-min token expiry.',
               },
               {
-                status: 'done', label: 'Quick Actions — Full Workflows',
-                detail: 'Replace Tablet (wipe + log), Surrender Vehicle (wipe both + unseat + mark), Remote Support (reboot + clear dispatch + clear BT) all wired.',
-              },
-              {
                 status: 'done', label: 'Sitewide Filters (Office / Fleet)',
-                detail: 'Office and ASC sub-fleet filters applied server-side across Vehicles, Devices, Verizon, Drivers.',
+                detail: 'Office and ASC sub-fleet filters applied server-side across every Fleet sub-view and Drivers.',
               },
               {
                 status: 'done', label: 'Server-Side Pagination & Filtering',
@@ -273,7 +309,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </div>
 
           <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text3)' }}>
-            🔴 Blocked &nbsp;·&nbsp; 🟡 To Do &nbsp;·&nbsp; ✅ Done
+            🟡 To Do &nbsp;·&nbsp; ✅ Done
           </div>
         </div>
       )}

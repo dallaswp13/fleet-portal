@@ -10,18 +10,27 @@ interface QuickAction {
 }
 
 /* ── Actions config ─────────────────────────────────────────── */
-const WORKING_ACTIONS: QuickAction[] = [
-  { id: 'create_vehicle',    icon: '🆕', color: '#1abc9c',       title: 'Create Vehicle',        description: 'Add a new vehicle record to the database.' },
+// Single unified action grid — no more split between "Working" and "M360" since
+// MaaS360 command execution is live (auth + reboot + clear-app-data + wipe all
+// verified against the real API).
+//
+// Replace Driver Tablet and Surrender Vehicle were removed 2026-04-15 per user
+// request — the wipe-first workflows weren't getting used and the destructive
+// path is better handled manually in the M360 portal.
+//
+// Remote Support is kept as a portal deep-link: the MaaS360 Webservices API
+// has no "initiate remote control" endpoint (confirmed against
+// "MaaS360 Webservices Reference Guide" v10.91, pages 125-172 — the action
+// type list contains reboot, wipe, kiosk, clear data, etc. but not remote
+// control). The admin portal is the only way to launch a TeamViewer session,
+// so this card jumps straight there.
+const ACTIONS: QuickAction[] = [
+  { id: 'reboot_tablet',      icon: '🔄', color: '#3498db',      title: 'Reboot Tablet',         description: 'Send a reboot command to a driver or PIM tablet via MaaS360.' },
+  { id: 'remote_support',     icon: '🛠', color: 'var(--green)', title: 'Remote Support',        description: 'Open the device in MaaS360 to launch a TeamViewer remote session.' },
+  { id: 'create_vehicle',     icon: '🆕', color: '#1abc9c',      title: 'Create Vehicle',        description: 'Add a new vehicle record and provision driver + PIM users in MaaS360.' },
   { id: 'get_available_line', icon: '📞', color: '#8e44ad',      title: 'Get Available Line',    description: 'Find an unassigned Verizon line and assign it to a vehicle.' },
-  { id: 'export_data',       icon: '📤', color: '#7f8c8d',       title: 'Export Fleet Data',     description: 'Download all fleet data as an Excel spreadsheet.' },
-  { id: 'new_inbox_rule',    icon: '⚙️', color: '#e67e22',       title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
-]
-
-const M360_ACTIONS: QuickAction[] = [
-  { id: 'reboot_tablet',    icon: '🔄', color: '#3498db',       title: 'Reboot Tablet',         description: 'Send a reboot command to a driver or PIM tablet via M360.' },
-  { id: 'replace_tablet',   icon: '📱', color: 'var(--blue)',   title: 'Replace Driver Tablet', description: 'Wipe the driver tablet and log the replacement.' },
-  { id: 'surrender_vehicle', icon: '🚕', color: 'var(--amber)', title: 'Surrender Vehicle',     description: 'Wipe both devices, unseat driver, and mark surrendered.' },
-  { id: 'remote_support',   icon: '🛠', color: 'var(--green)',  title: 'Remote Support',        description: 'Initiate a TeamViewer remote support session via M360. Pending API access.' },
+  { id: 'new_inbox_rule',     icon: '⚙️', color: '#e67e22',      title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
+  { id: 'export_data',        icon: '📤', color: '#7f8c8d',      title: 'Export Fleet Data',     description: 'Download all fleet data as an Excel spreadsheet.' },
 ]
 
 const FLEETS = [
@@ -95,259 +104,60 @@ async function m360Action(action: string, deviceId: string, vehicleNumber: numbe
   const data = await res.json()
   const ok = data.success ?? false
   const msg = data.message ?? data.error ?? 'Unknown response'
-  // Toast the outcome so multi-step flows (Replace Tablet, Surrender, …)
-  // give immediate per-step feedback instead of only surfacing at the end.
   const label = `Vehicle ${vehicleNumber} · ${action}`
   if (ok) toast.success(`${label} sent`, { detail: msg })
   else    toast.error(`${label} failed`, { detail: msg })
   return { ok, msg }
 }
 
-/* ── Replace Tablet workflow ────────────────────────────────── */
-function ReplaceTabletModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
-  const [vehicle, setVehicle] = useState<Vehicle | null>(null)
-  const [reason,  setReason]  = useState('')
-  const [busy,    setBusy]    = useState(false)
-  const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const REASONS = ['Screen damage', 'Device lost', 'Battery failure', 'Software issue', 'Other']
-
-  async function confirm() {
-    if (!vehicle || !reason) return
-    setBusy(true)
-    const msgs: string[] = []
-    // 1. Wipe driver tablet via M360
-    if (vehicle.m360_device_id) {
-      const r = await m360Action('wipe', vehicle.m360_device_id, vehicle.vehicle_number, true)
-      msgs.push(`M360 wipe: ${r.msg}`)
-    } else {
-      msgs.push('M360 wipe: skipped (no device ID — import devices first)')
-    }
-    // 2. Log note on vehicle
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    const { data: veh } = await sb.from('vehicles').select('notes').eq('id', vehicle.id).single()
-    let log: { text: string; ts: string }[] = []
-    try { log = JSON.parse(veh?.notes ?? '[]') } catch { log = [] }
-    log.unshift({ text: `[Replace Tablet] Reason: ${reason} · Device: ${vehicle.device_name ?? 'unknown'} · by: ${user?.email}`, ts: new Date().toISOString() })
-    await sb.from('vehicles').update({ notes: JSON.stringify(log), updated_at: new Date().toISOString() }).eq('id', vehicle.id)
-    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'replace_tablet', target_type: 'vehicle', target_id: vehicle.id, vehicle_number: vehicle.vehicle_number, payload: { reason, device_name: vehicle.device_name }, success: true }) } catch { /* non-fatal */ }
-    setBusy(false)
-    setResult({ ok: true, msg: msgs.join('\n') })
-  }
-
-  return (
-    <ModalShell action={action} onClose={onClose}>
-      {!vehicle ? (
-        <VehicleLookup onFound={setVehicle} color={action.color} />
-      ) : !reason ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Reason for replacement</div>
-          {REASONS.map(r => (
-            <button key={r} onClick={() => setReason(r)}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', marginBottom: 6, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
-              {r}
-            </button>
-          ))}
-        </div>
-      ) : result ? (
-        <ResultBanner ok={result.ok} msg={result.msg} />
-      ) : (
-        <div>
-          <ConfirmBox rows={[
-            ['Vehicle', `#${vehicle.vehicle_number} ${vehicle.fleet_id.toUpperCase()}`],
-            ['Driver device', vehicle.device_name ?? '(no device ID)'],
-            ['Reason', reason],
-            ['Action', 'Factory wipe driver tablet via M360'],
-          ]} />
-          <ActionButtons busy={busy} onBack={() => setReason('')} onConfirm={confirm} color={action.color} label="Wipe Tablet" />
-        </div>
-      )}
-    </ModalShell>
-  )
-}
-
-/* ── Surrender Vehicle workflow ─────────────────────────────── */
-function SurrenderVehicleModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
-  const [vehicle,  setVehicle]  = useState<Vehicle | null>(null)
-  const [reason,   setReason]   = useState('')
-  const [busy,     setBusy]     = useState(false)
-  const [result,   setResult]   = useState<{ ok: boolean; msg: string } | null>(null)
-
-  const REASONS = ['Driver surrendered voluntarily', 'Lease expired', 'Accident / total loss', 'Repossessed', 'Other']
-
-  async function confirm() {
-    if (!vehicle || !reason) return
-    setBusy(true)
-    const msgs: string[] = []
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-
-    // 1. Wipe driver tablet
-    if (vehicle.m360_device_id) {
-      const r = await m360Action('wipe', vehicle.m360_device_id, vehicle.vehicle_number, true)
-      msgs.push(`Driver tablet wipe: ${r.msg}`)
-    } else {
-      msgs.push('Driver tablet: no device ID — skipped')
-    }
-
-    // 2. Wipe PIM tablet
-    if (vehicle.pim_m360_device_id) {
-      const r = await m360Action('wipe', vehicle.pim_m360_device_id, vehicle.vehicle_number, true)
-      msgs.push(`PIM tablet wipe: ${r.msg}`)
-    } else {
-      msgs.push('PIM tablet: no device ID — skipped')
-    }
-
-    // 3. Unseat driver
-    const { data: driver } = await sb.from('drivers')
-      .select('id, name, driver_id').eq('seated_vehicle_id', vehicle.id).single()
-    if (driver) {
-      await sb.from('drivers').update({ seated_vehicle_id: null, seated_vehicle_number: null, updated_at: new Date().toISOString() }).eq('id', driver.id)
-      msgs.push(`Driver unseated: ${driver.name ?? `#${driver.driver_id}`}`)
-    } else {
-      msgs.push('No driver seated — skipped unseat')
-    }
-
-    // 4. Mark vehicle surrendered
-    const { data: veh } = await sb.from('vehicles').select('notes').eq('id', vehicle.id).single()
-    let log: { text: string; ts: string }[] = []
-    try { log = JSON.parse(veh?.notes ?? '[]') } catch { log = [] }
-    log.unshift({ text: `[Surrender] Reason: ${reason} · by: ${user?.email}`, ts: new Date().toISOString() })
-    await sb.from('vehicles').update({
-      sheet_tab: 'Surrenders', online_status: 'Surrendered',
-      notes: JSON.stringify(log), updated_at: new Date().toISOString()
-    }).eq('id', vehicle.id)
-    msgs.push('Vehicle marked as Surrendered')
-
-    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'surrender_vehicle', target_type: 'vehicle', target_id: vehicle.id, vehicle_number: vehicle.vehicle_number, payload: { reason }, success: true }) } catch { /* non-fatal */ }
-    setBusy(false)
-    setResult({ ok: true, msg: msgs.join('\n') })
-  }
-
-  return (
-    <ModalShell action={action} onClose={onClose}>
-      {!vehicle ? (
-        <VehicleLookup onFound={setVehicle} color={action.color} />
-      ) : !reason ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Reason for surrender</div>
-          {REASONS.map(r => (
-            <button key={r} onClick={() => setReason(r)}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', marginBottom: 6, background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
-              {r}
-            </button>
-          ))}
-        </div>
-      ) : result ? (
-        <>
-          {msgs(result.msg)}
-        </>
-      ) : (
-        <div>
-          <ConfirmBox rows={[
-            ['Vehicle', `#${vehicle.vehicle_number} ${vehicle.fleet_id.toUpperCase()}`],
-            ['Driver device', vehicle.device_name ?? '(none)'],
-            ['PIM device', vehicle.pim_device_name ?? '(none)'],
-            ['Reason', reason],
-            ['Actions', 'Wipe both devices · unseat driver · mark Surrendered'],
-          ]} />
-          <ActionButtons busy={busy} onBack={() => setReason('')} onConfirm={confirm} color={action.color} label="Surrender Vehicle" danger />
-        </div>
-      )}
-    </ModalShell>
-  )
-}
-
-/* ── Remote Support workflow ────────────────────────────────── */
+/* ── Remote Support workflow (M360 portal deep-link) ────────── */
+//
+// The MaaS360 Webservices API does not expose a "start remote control" action
+// type (see Quick Actions config note above), so Remote Support opens the
+// device's admin page in the portal. From there the admin can click
+// "Remote Control" which launches TeamViewer externally.
 function RemoteSupportModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
   const [vehicle, setVehicle] = useState<Vehicle | null>(null)
-  const [busy,    setBusy]    = useState(false)
-  const [result,  setResult]  = useState<{ ok: boolean; msg: string } | null>(null)
+  const [target,  setTarget]  = useState<'driver' | 'pim' | null>(null)
 
-  const [steps, setSteps] = useState<{ label: string; status: 'pending' | 'running' | 'done' | 'error'; msg?: string }[]>([])
-
-  async function confirm() {
-    if (!vehicle) return
-    setBusy(true)
-
-    const stepDefs = [
-      { label: 'Reboot driver tablet', run: () => vehicle.m360_device_id ? m360Action('reboot', vehicle.m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No driver device ID' }) },
-      { label: 'Clear dispatch app cache', run: () => vehicle.m360_device_id ? m360Action('clear_dispatch', vehicle.m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No driver device ID' }) },
-      { label: 'Clear PIM Bluetooth', run: () => vehicle.pim_m360_device_id ? m360Action('clear_pim_bt', vehicle.pim_m360_device_id!, vehicle.vehicle_number) : Promise.resolve({ ok: false, msg: 'No PIM device ID — skipped' }) },
-    ]
-
-    const newSteps: { label: string; status: 'pending' | 'running' | 'done' | 'error'; msg?: string }[] = stepDefs.map(s => ({ label: s.label, status: 'pending' as const }))
-    setSteps([...newSteps])
-
-    let allOk = true
-    const msgs: string[] = []
-
-    for (let i = 0; i < stepDefs.length; i++) {
-      newSteps[i] = { ...newSteps[i], status: 'running' }
-      setSteps([...newSteps])
-
-      const r = await stepDefs[i].run()
-      newSteps[i] = { label: newSteps[i].label, status: r.ok ? 'done' : 'error', msg: r.msg }
-      setSteps([...newSteps])
-      msgs.push(`${r.ok ? '✓' : '✗'} ${newSteps[i].label}: ${r.msg}`)
-      if (!r.ok && newSteps[i].label !== 'Clear PIM Bluetooth') allOk = false
-    }
-
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-
-    // Log note on vehicle
-    const { data: veh } = await sb.from('vehicles').select('notes').eq('id', vehicle.id).single()
-    let log: { text: string; ts: string }[] = []
-    try { log = JSON.parse(veh?.notes ?? '[]') } catch { log = [] }
-    log.unshift({ text: `[Remote Support] ${msgs.join(' | ')} · by: ${user?.email}`, ts: new Date().toISOString() })
-    await sb.from('vehicles').update({ notes: JSON.stringify(log), updated_at: new Date().toISOString() }).eq('id', vehicle.id)
-
-    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'remote_support', target_type: 'device', target_id: vehicle.m360_device_id ?? vehicle.id, vehicle_number: vehicle.vehicle_number, payload: { steps: msgs }, success: allOk }) } catch { /* non-fatal */ }
-    setBusy(false)
-    setResult({ ok: allOk, msg: msgs.join('\n') })
+  function openInPortal(deviceId: string) {
+    // Portal device-detail URL. The exact path has varied across M360 UI
+    // revisions, so we use the tenant-aware search URL which reliably lands
+    // on the device page for any billing ID. Admins then click "Actions →
+    // Remote Control" from there.
+    const url = `https://m3.maas360.com/emm/admin/action?action=viewDeviceDetails&csn=${encodeURIComponent(deviceId)}`
+    window.open(url, '_blank', 'noopener,noreferrer')
+    onClose()
   }
 
   return (
     <ModalShell action={action} onClose={onClose}>
       {!vehicle ? (
         <VehicleLookup onFound={setVehicle} color={action.color} />
-      ) : result ? (
+      ) : !target ? (
         <div>
-          {steps.map((s, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 13 }}>
-              <span>{s.status === 'done' ? '✅' : s.status === 'error' ? '❌' : '⬜'}</span>
-              <span style={{ fontWeight: 500 }}>{s.label}</span>
-              {s.msg && <span style={{ fontSize: 11, color: 'var(--text3)' }}>— {s.msg}</span>}
-            </div>
-          ))}
-          <div style={{ marginTop: 12 }}>
-            <ResultBanner ok={result.ok} msg={result.ok ? 'Support sequence complete' : 'Some steps failed — see details above'} />
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Which tablet?</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button onClick={() => { if (vehicle.m360_device_id) { setTarget('driver'); openInPortal(vehicle.m360_device_id) } }}
+              disabled={!vehicle.m360_device_id}
+              style={{ textAlign: 'left', padding: '12px 14px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: vehicle.m360_device_id ? 'pointer' : 'not-allowed', opacity: vehicle.m360_device_id ? 1 : 0.5 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Driver Tablet</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{vehicle.device_name ?? 'No device ID'}{vehicle.m360_device_id ? ' — open in M360' : ' — cannot open'}</div>
+            </button>
+            <button onClick={() => { if (vehicle.pim_m360_device_id) { setTarget('pim'); openInPortal(vehicle.pim_m360_device_id) } }}
+              disabled={!vehicle.pim_m360_device_id}
+              style={{ textAlign: 'left', padding: '12px 14px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: vehicle.pim_m360_device_id ? 'pointer' : 'not-allowed', opacity: vehicle.pim_m360_device_id ? 1 : 0.5 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>PIM Tablet</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{vehicle.pim_device_name ?? 'No device ID'}{vehicle.pim_m360_device_id ? ' — open in M360' : ' — cannot open'}</div>
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, lineHeight: 1.5 }}>
+            Remote Support opens the device in the MaaS360 admin portal in a new tab. Click <b>Actions → Remote Control</b> on the device page to launch TeamViewer.
+            <br /><br />
+            The MaaS360 Webservices API does not expose an endpoint to start a remote session programmatically, so this step has to happen in the portal.
           </div>
         </div>
-      ) : steps.length > 0 ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Running support sequence…</div>
-          {steps.map((s, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 13 }}>
-              <span>{s.status === 'done' ? '✅' : s.status === 'error' ? '❌' : s.status === 'running' ? '⏳' : '⬜'}</span>
-              <span style={{ fontWeight: 500, opacity: s.status === 'pending' ? 0.5 : 1 }}>{s.label}</span>
-              {s.msg && <span style={{ fontSize: 11, color: 'var(--text3)' }}>— {s.msg}</span>}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div>
-          <ConfirmBox rows={[
-            ['Vehicle', `#${vehicle.vehicle_number} ${vehicle.fleet_id.toUpperCase()}`],
-            ['Driver device', vehicle.device_name ?? '(no device ID)'],
-            ['PIM device', vehicle.pim_device_name ?? '(no device ID)'],
-            ['Actions', '1) Reboot driver tablet\n2) Clear dispatch app cache\n3) Clear PIM Bluetooth'],
-          ]} />
-          <ActionButtons busy={busy} onBack={() => setVehicle(null)} onConfirm={confirm} color={action.color} label="Run Support Sequence" />
-        </div>
-      )}
+      ) : null}
     </ModalShell>
   )
 }
@@ -433,7 +243,6 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
     setBusy(true)
     const sb = createClient()
 
-    // Get all phone norms assigned to any vehicle (across all fleets sharing this office)
     const fleetIds = office === 'ASC' ? ['E','L','S','Y','U']
                    : office === 'CYC' ? ['C']
                    : office === 'SDY' ? ['G']
@@ -447,7 +256,6 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
       if (v.pim_phone_norm) assignedNorms.add(v.pim_phone_norm)
     }
 
-    // Get lines for this office that aren't assigned to any vehicle
     const { data: lines } = await sb.from('verizon_lines')
       .select('id,phone_number,phone_norm,mobile_plan')
       .eq('office', office)
@@ -539,7 +347,6 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
     setStepLog([`Creating vehicle #${num}${fleet}…`])
     const sb = createClient()
 
-    // Check if vehicle already exists
     const { data: existing } = await sb.from('vehicles').select('id').eq('vehicle_number', num).eq('fleet_id', fleet).limit(1).single()
     if (existing) { setResult({ ok: false, msg: `Vehicle #${num} ${fleet} already exists in the database.` }); setBusy(false); return }
 
@@ -557,7 +364,6 @@ function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose:
     const { data: { user } } = await sb.auth.getUser()
     try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'create_vehicle', target_type: 'vehicle', target_id: nameKey, vehicle_number: num, success: true }) } catch { /* non-fatal */ }
 
-    // Provision two M360 users (driver + PIM) and assign to groups
     let m360Ok = false
     let m360Steps: { step: string; success: boolean; detail: string }[] = []
     let m360Msg = ''
@@ -672,7 +478,6 @@ function ExportDataModal({ action, onClose }: { action: QuickAction; onClose: ()
   const [fieldCount, setFieldCount] = useState(0)
 
   useEffect(() => {
-    // Check if user has saved field preferences
     try {
       const saved = localStorage.getItem('fleet-export-fields')
       if (saved) {
@@ -685,14 +490,12 @@ function ExportDataModal({ action, onClose }: { action: QuickAction; onClose: ()
   function exportWithPrefs() {
     setBusy(true)
     try {
-      // Use saved preferences from the Export Data settings panel
       const saved = localStorage.getItem('fleet-export-fields')
       let keys = ''
       if (saved) {
         const arr = JSON.parse(saved)
         if (Array.isArray(arr) && arr.length > 0) keys = arr.join(',')
       }
-      // Use the XLSX export endpoint with saved field preferences
       const url = keys ? `/api/export?fields=${keys}` : '/api/export'
       window.open(url, '_blank')
       setBusy(false)
@@ -774,12 +577,6 @@ function ActionButtons({ busy, onBack, onConfirm, color, label, danger = false, 
   )
 }
 
-function msgs(msg: string) {
-  return (
-    <div className="alert alert-success" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>{msg}</div>
-  )
-}
-
 /* ── Main Page ─────────────────────────────────────────────── */
 export default function ActionsPage() {
   const [active, setActive] = useState<QuickAction | null>(null)
@@ -788,8 +585,6 @@ export default function ActionsPage() {
     if (!active) return null
     const props = { action: active, onClose: () => setActive(null) }
     switch (active.id) {
-      case 'replace_tablet':     return <ReplaceTabletModal     {...props} />
-      case 'surrender_vehicle':  return <SurrenderVehicleModal  {...props} />
       case 'remote_support':     return <RemoteSupportModal     {...props} />
       case 'reboot_tablet':      return <RebootTabletModal      {...props} />
       case 'create_vehicle':     return <CreateVehicleModal     {...props} />
@@ -799,10 +594,16 @@ export default function ActionsPage() {
     }
   }
 
-  function renderActionGrid(actions: QuickAction[]) {
-    return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-        {actions.map(action => (
+  return (
+    <div className="page-content">
+      {renderModal()}
+
+      <div className="page-header">
+        <div><h1>Quick Actions</h1><p>Guided workflows and fleet management tools</p></div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+        {ACTIONS.map(action => (
           <button key={action.id}
             onClick={() => action.href ? (window.location.href = action.href) : setActive(action)}
             style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '18px', cursor: 'pointer', textAlign: 'left', transition: 'all 0.12s', display: 'flex', flexDirection: 'column', gap: 8 }}
@@ -818,28 +619,6 @@ export default function ActionsPage() {
           </button>
         ))}
       </div>
-    )
-  }
-
-  return (
-    <div className="page-content">
-      {renderModal()}
-
-      <div className="page-header">
-        <div><h1>Quick Actions</h1><p>Guided workflows and fleet management tools</p></div>
-      </div>
-
-      {renderActionGrid(WORKING_ACTIONS)}
-
-      <div style={{ marginTop: 32, marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-          <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text2)', margin: 0 }}>MaaS360 Device Actions</h2>
-          <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--amber-bg, var(--bg4))', color: 'var(--amber, var(--text3))', fontWeight: 600 }}>Pending API Access</span>
-        </div>
-        <p style={{ fontSize: 12, color: 'var(--text3)', margin: 0 }}>These actions require MaaS360 API device management permissions. Contact M360 support to enable.</p>
-      </div>
-
-      {renderActionGrid(M360_ACTIONS)}
     </div>
   )
 }

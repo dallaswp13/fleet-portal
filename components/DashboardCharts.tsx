@@ -58,7 +58,7 @@ export default function DashboardCharts({ fleetStatus, topUsage }: Props) {
     // Preserve existing office/fleet params, add status filter
     const p = new URLSearchParams(searchParams.toString())
     p.set('q', statusFilter)
-    router.push(`/vehicles?${p.toString()}`)
+    router.push(`/fleet/vehicles?${p.toString()}`)
   }
 
   const statusSlices = [
@@ -110,7 +110,7 @@ export default function DashboardCharts({ fleetStatus, topUsage }: Props) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {topUsage.map((u, i) => (
             <div key={i}
-              onClick={() => u.vehicleNumber && router.push(`/vehicles?q=${u.vehicleNumber}`)}
+              onClick={() => u.vehicleNumber && router.push(`/fleet/vehicles?q=${u.vehicleNumber}`)}
               style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 6px', borderRadius: 6, cursor: u.vehicleNumber ? 'pointer' : 'default' }}
               onMouseEnter={e => { if (u.vehicleNumber) e.currentTarget.style.background = 'var(--bg3)' }}
               onMouseLeave={e => { e.currentTarget.style.background = 'none' }}>

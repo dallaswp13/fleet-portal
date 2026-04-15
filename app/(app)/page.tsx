@@ -31,18 +31,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     return q
   }
 
-  // Resolve the vehicle_name_keys in scope for the office/tab filter so we can
+  // Resolve the vehicle_name_keys in scope for fleet filters so we can
   // count devices by name_key (one vehicle has 2 devices: driver + PIM, each as
   // a distinct row in `devices`). Counting through `fleet_overview` instead
   // undercounts by 2x because that view is one row per vehicle.
+  //
+  // We deliberately do NOT apply the sheet_tab filter here: a device is
+  // managed in MaaS360 regardless of whether its vehicle is Active, Test, or
+  // Surrendered, and counting the "Devices" stat against active-only vehicles
+  // makes the number lag ~40-45% below the actual devices table (e.g. showing
+  // 1734 when M360 has 3071 rows). The tab filter still applies to vehicle
+  // stat rows above.
   let deviceNameKeys: string[] | null = null
-  if (fleetIds !== null || !allTabs) {
+  if (fleetIds !== null) {
     let vq = supabase.from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
-    if (fleetIds !== null) {
-      if (fleetIds.length === 0) vq = vq.eq('vehicle_number', -1)
-      else vq = vq.in('fleet_id', fleetIds)
-    }
-    if (!allTabs) vq = vq.in('sheet_tab', tabs)
+    if (fleetIds.length === 0) vq = vq.eq('vehicle_number', -1)
+    else vq = vq.in('fleet_id', fleetIds)
     const { data: vehs } = await vq
     deviceNameKeys = (vehs ?? []).map(v => v.vehicle_name_key as string)
   }
@@ -148,12 +152,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .slice(0, 8)
 
   const stats = [
-    { label: 'Total Vehicles', value: totalVehicles ?? 0, sub: allOffices && allTabs ? 'All fleet records' : 'Filtered', href: '/vehicles' },
-    { label: 'Online',         value: online   ?? 0, sub: 'Active right now',   color: 'var(--green)', href: '/vehicles' },
-    { label: 'Offline',        value: offline  ?? 0, sub: 'Not reporting',       color: 'var(--amber)', href: '/vehicles' },
-    { label: 'Inactive',       value: inactive ?? 0, sub: 'Surrendered / idle',  color: 'var(--text3)', href: '/vehicles' },
-    { label: 'Devices',        value: totalDevices  ?? 0, sub: 'MaaS360 managed', href: '/devices' },
-    { label: 'Verizon Lines',  value: totalLines    ?? 0, sub: allOffices ? 'All SIM cards' : 'Filtered', href: '/lines' },
+    { label: 'Total Vehicles', value: totalVehicles ?? 0, sub: allOffices && allTabs ? 'All fleet records' : 'Filtered', href: '/fleet/vehicles' },
+    { label: 'Online',         value: online   ?? 0, sub: 'Active right now',   color: 'var(--green)', href: '/fleet/vehicles' },
+    { label: 'Offline',        value: offline  ?? 0, sub: 'Not reporting',       color: 'var(--amber)', href: '/fleet/vehicles' },
+    { label: 'Inactive',       value: inactive ?? 0, sub: 'Surrendered / idle',  color: 'var(--text3)', href: '/fleet/vehicles' },
+    { label: 'Devices',        value: totalDevices  ?? 0, sub: 'MaaS360 managed', href: '/fleet/devices' },
+    { label: 'Verizon Lines',  value: totalLines    ?? 0, sub: allOffices ? 'All SIM cards' : 'Filtered', href: '/fleet/lines' },
   ]
 
   const ACTION_LABELS: Record<string, string> = {

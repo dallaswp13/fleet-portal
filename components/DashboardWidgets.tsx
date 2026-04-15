@@ -164,7 +164,7 @@ export function VerizonUsageAlerts({ alerts, usageThreshold }: { alerts: Verizon
     <div className="card" style={{ flex: '1 1 320px' }}>
       <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <h2 style={{ fontSize: 14, fontWeight: 600 }}>Verizon Alerts</h2>
-        <a href="/lines" style={{ fontSize: 12, color: 'var(--accent)' }}>View Lines &rarr;</a>
+        <a href="/fleet/lines" style={{ fontSize: 12, color: 'var(--accent)' }}>View Lines &rarr;</a>
       </div>
 
       {alerts.length === 0 ? (
@@ -181,7 +181,7 @@ export function VerizonUsageAlerts({ alerts, usageThreshold }: { alerts: Verizon
                 Suspended Lines ({suspended.length})
               </div>
               {suspended.map((a, i) => (
-                <div key={`s${i}`} onClick={() => router.push('/lines')} className="hover-row"
+                <div key={`s${i}`} onClick={() => router.push('/fleet/lines')} className="hover-row"
                   style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{a.phone_number}</div>
@@ -198,7 +198,7 @@ export function VerizonUsageAlerts({ alerts, usageThreshold }: { alerts: Verizon
                 High Usage &gt; {usageThreshold} GB ({highUsage.length})
               </div>
               {highUsage.map((a, i) => (
-                <div key={`u${i}`} onClick={() => router.push('/lines')} className="hover-row"
+                <div key={`u${i}`} onClick={() => router.push('/fleet/lines')} className="hover-row"
                   style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{a.phone_number}</div>
