@@ -13,6 +13,7 @@ const mainNav = [
   { href: '/drivers',   label: 'Drivers',         icon: '🧑‍✈️' },
   { href: '/sms',       label: 'Inbox',            icon: '💬' },
   { href: '/rylo',      label: 'Rylo Tracker',     icon: '📋' },
+  { href: '/inventory', label: 'Inventory',        icon: '📦' },
 ]
 
 const settingsNav = [

@@ -408,6 +408,23 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   // m360Outcome === 'blocked' | 'skipped' → leave success=null so the Execute
   // button still reads as "not yet handled" and a human can click it.
 
+  // claude_status transitions:
+  //   webhook insert → 'thinking'
+  //   rule match with auto-exec → 'executed' | 'failed' | 'blocked' | 'skipped'
+  //   rule match with auto-reply only → 'replied'
+  //   rule match, no auto anything → 'manual' (waiting on human Execute click)
+  //   NO rule match → left untouched here; handleClaudeConversation owns it.
+  let derivedClaudeStatus: string | null = null
+  if (ruleMatch) {
+    if (m360Outcome) {
+      derivedClaudeStatus = m360Outcome
+    } else if (autoReplySent) {
+      derivedClaudeStatus = 'replied'
+    } else {
+      derivedClaudeStatus = 'manual'
+    }
+  }
+
   const update: Record<string, unknown> = {
     action: intent.action,
     vehicle_number: vehicleNum || null,
@@ -419,11 +436,14 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     rule_name: ruleMatch?.name ?? null,
     result,
     success: rowSuccess,
-    claude_status: m360Outcome ?? null,
     processed: true,
     translated_text: intent.translated_text || null,
     source_language: intent.source_language || null,
   }
+  // Only overwrite claude_status when a rule matched; otherwise the
+  // conversational path (step 6) will set 'thinking' → 'replied' / 'failed'
+  // and we don't want to clobber it here.
+  if (ruleMatch) update.claude_status = derivedClaudeStatus
 
   let { error: updErr } = await svc.from('sms_messages').update(update).eq('id', messageId)
   if (updErr && /translated_text|source_language/i.test(updErr.message)) {
@@ -523,6 +543,8 @@ If the driver's message is not English, reply in THEIR language. Do not send bil
 Respond with ONLY valid JSON — no explanation, no markdown fences:
 {
   "reply": "<the SMS text to send to the driver, in their language>",
+  "reply_english": "<if 'reply' is NOT in English, the English translation of it. If 'reply' IS English, leave empty.>",
+  "source_language": "<the language of 'reply' if not English (e.g. 'Spanish', 'Armenian', 'Farsi', 'Russian'). Leave empty for English.>",
   "reason": "<brief 1-line note for internal logs on why you chose this reply>",
   "needs_human": <true if you could not resolve and a human should step in, else false>
 }`
@@ -542,6 +564,11 @@ interface VehicleContext {
 
 interface ClaudeReplyResult {
   reply: string
+  /** English translation of `reply` when Claude replied in another language.
+   *  Empty string if `reply` is already English. Stored on the outbound row
+   *  as `translated_text` so the inbox can render both. */
+  replyEnglish: string
+  sourceLanguage: string
   reason: string
   needsHuman: boolean
   error: string | null
@@ -646,7 +673,7 @@ async function generateDriverReply(
 ): Promise<ClaudeReplyResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
-    return { reply: '', reason: 'ANTHROPIC_API_KEY not set', needsHuman: true, error: 'no_api_key' }
+    return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'ANTHROPIC_API_KEY not set', needsHuman: true, error: 'no_api_key' }
   }
 
   const [history, lessons, vehCtx] = await Promise.all([
@@ -692,7 +719,7 @@ async function generateDriverReply(
     })
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      return { reply: '', reason: `API ${res.status}`, needsHuman: true, error: errText.slice(0, 200) }
+      return { reply: '', replyEnglish: '', sourceLanguage: '', reason: `API ${res.status}`, needsHuman: true, error: errText.slice(0, 200) }
     }
     const data = await res.json()
     const raw = (data.content?.[0]?.text ?? '').trim()
@@ -700,10 +727,12 @@ async function generateDriverReply(
     const parsed = JSON.parse(json)
     const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : ''
     if (!reply) {
-      return { reply: '', reason: 'Empty reply from Claude', needsHuman: true, error: 'empty_reply' }
+      return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'Empty reply from Claude', needsHuman: true, error: 'empty_reply' }
     }
     return {
       reply,
+      replyEnglish:   typeof parsed.reply_english   === 'string' ? parsed.reply_english.trim()   : '',
+      sourceLanguage: typeof parsed.source_language === 'string' ? parsed.source_language.trim() : '',
       reason: typeof parsed.reason === 'string' ? parsed.reason : '',
       needsHuman: parsed.needs_human === true,
       error: null,
@@ -711,6 +740,8 @@ async function generateDriverReply(
   } catch (err) {
     return {
       reply: '',
+      replyEnglish: '',
+      sourceLanguage: '',
       reason: 'Claude call failed',
       needsHuman: true,
       error: err instanceof Error ? err.message : 'unknown',
@@ -777,6 +808,10 @@ async function handleClaudeConversation(
   }
 
   const fromLabel = getTwilioNumber() || getMessagingServiceSid() || 'Fleet Portal'
+  // If Claude replied in another language, store the English translation
+  // on `translated_text` so the inbox renders both (same UX as inbound).
+  // sms_text always carries the text we actually sent to the driver.
+  const hasTranslation = !!result.replyEnglish && !!result.sourceLanguage
   const outboundRow = {
     gmail_id: `claude_reply_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     sender: 'Claude',
@@ -795,12 +830,14 @@ async function handleClaudeConversation(
     processed: true,
     success: true,
     result: result.needsHuman ? 'Claude flagged for human follow-up' : 'Claude auto-reply',
+    translated_text: hasTranslation ? result.replyEnglish : null,
+    source_language: hasTranslation ? result.sourceLanguage : null,
     received_at: new Date().toISOString(),
   }
   let { error: outErr } = await svc.from('sms_messages').insert(outboundRow)
-  // Graceful fallback if migration 033 or 027 columns are missing.
-  if (outErr && /is_claude_reply|direction|source|twilio_sid|recipient_phone/i.test(outErr.message)) {
-    const { is_claude_reply: _icr, direction: _d, source: _s, twilio_sid: _ts, recipient_phone: _rp, ...legacy } = outboundRow
+  // Graceful fallback if newer columns are missing in the DB.
+  if (outErr && /is_claude_reply|direction|source|twilio_sid|recipient_phone|translated_text|source_language/i.test(outErr.message)) {
+    const { is_claude_reply: _icr, direction: _d, source: _s, twilio_sid: _ts, recipient_phone: _rp, translated_text: _tt, source_language: _sl, ...legacy } = outboundRow
     const retry = await svc.from('sms_messages').insert(legacy)
     outErr = retry.error
   }

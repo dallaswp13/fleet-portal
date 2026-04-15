@@ -79,12 +79,10 @@ export default function DataAuditorView({
     return b.count - a.count
   })
 
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    // Auto-expand anything non-zero
-    const m: Record<string, boolean> = {}
-    for (const s of ordered) if (s.count > 0) m[s.id] = true
-    return m
-  })
+  // All sections start collapsed. User can expand what they want; severity
+  // sort (Critical → Info, with count desc within each tier) is handled by
+  // the `ordered` array above.
+  const [open, setOpen] = useState<Record<string, boolean>>({})
 
   const [showIgnored, setShowIgnored] = useState(false)
 

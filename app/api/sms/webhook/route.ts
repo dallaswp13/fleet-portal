@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { createServiceClient } from '@/lib/supabase/server'
 import { processInboundSms } from '@/lib/smsProcess'
@@ -144,7 +144,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Compose row with all Twilio columns (migration 027 schema)
+  // Compose row with all Twilio columns (migration 027 schema).
+  //
+  // We stamp `claude_status: 'thinking'` on insert so the Inbox UI can show
+  // the "Claude is thinking…" indicator the instant the message arrives via
+  // Supabase Realtime — even though the actual processing happens async in
+  // `after()` below. The processInboundSms pipeline transitions this to
+  // 'replied' / 'executed' / 'manual' / 'failed' when it completes.
   const fullRow = {
     gmail_id: sid ? `twilio_${sid}` : `twilio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     sender: senderLabel,
@@ -155,6 +161,7 @@ export async function POST(req: NextRequest) {
     twilio_sid: sid || null,
     recipient_phone: null,
     processed: false,
+    claude_status: 'thinking',
     received_at: new Date().toISOString(),
   }
 
@@ -165,9 +172,9 @@ export async function POST(req: NextRequest) {
     .single()
 
   // If migration 027 isn't applied, strip Twilio-only columns and retry
-  if (error && /direction|source|twilio_sid|recipient_phone/i.test(error.message)) {
+  if (error && /direction|source|twilio_sid|recipient_phone|claude_status/i.test(error.message)) {
     console.warn('[twilio-webhook] Twilio schema columns missing — retrying without them. Run migration 027 to enable.')
-    const { direction, source, twilio_sid, recipient_phone, ...legacy } = fullRow
+    const { direction, source, twilio_sid, recipient_phone, claude_status, ...legacy } = fullRow
     const retry = await svc.from('sms_messages').insert(legacy).select('id').single()
     inserted = retry.data
     error = retry.error
@@ -181,20 +188,44 @@ export async function POST(req: NextRequest) {
 
   console.log(`[twilio-webhook] stored inbound message from ${phoneNorm} (media=${numMedia})`)
 
-  // Run the unified processing pipeline: rule match → auto-reply → row update.
-  // Await it so Twilio sees any response before closing the request — within
-  // Twilio's 15s webhook budget. Errors are logged but never propagated.
+  // Run the unified processing pipeline AFTER we've responded to Twilio.
+  //
+  // Why: the old flow awaited processInboundSms (which calls the Anthropic
+  // API and can take several seconds) before returning TwiML. That made the
+  // Inbox feel laggy — the new inbound message + Claude's reply both showed
+  // up at the same moment. By moving this work into `after()`:
+  //   1. Twilio gets an instant 200 response (well under its 15s budget).
+  //   2. Supabase Realtime delivers the INSERT to the open Inbox tab right
+  //      now, so the message appears immediately with a "thinking" badge.
+  //   3. processInboundSms runs to completion on its own time and fires
+  //      UPDATEs that clear the indicator and show the reply.
+  //
+  // `after()` keeps the serverless invocation alive until the work is done.
+  // Errors are logged; they never bubble back to Twilio.
   if (inserted?.id) {
-    try {
-      const result = await processInboundSms(svc, {
-        messageId: inserted.id,
-        smsText: body,
-        senderPhone: phoneNorm,
-      })
-      console.log(`[twilio-webhook] processed:`, result)
-    } catch (err) {
-      console.error('[twilio-webhook] processInboundSms threw:', err)
-    }
+    const messageId = inserted.id
+    after(async () => {
+      try {
+        const result = await processInboundSms(svc, {
+          messageId,
+          smsText: body,
+          senderPhone: phoneNorm,
+        })
+        console.log(`[twilio-webhook] processed (async):`, result)
+      } catch (err) {
+        console.error('[twilio-webhook] processInboundSms threw (async):', err)
+        // Best-effort: clear the 'thinking' indicator so the UI doesn't
+        // hang forever if something in processing crashed before smsProcess
+        // could update the row.
+        try {
+          await svc.from('sms_messages').update({
+            claude_status: 'failed',
+            processed: true,
+            result: 'Background processing error',
+          }).eq('id', messageId)
+        } catch { /* swallow */ }
+      }
+    })
   }
 
   return xmlResponse()
