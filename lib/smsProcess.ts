@@ -637,6 +637,19 @@ async function handleClaudeConversation(
     return { sent: false, error: !senderPhone ? 'no_phone' : 'twilio_unconfigured' }
   }
 
+  // Runtime kill-switch: Dallas can flip Responding OFF from the Claude button
+  // in the header. When OFF, we mark the inbound 'skipped' and return without
+  // calling the Anthropic API. See lib/appSettings.ts and migration 034.
+  const { isClaudeRespondingEnabled } = await import('@/lib/appSettings')
+  const respondingEnabled = await isClaudeRespondingEnabled()
+  if (!respondingEnabled) {
+    await svc.from('sms_messages').update({
+      claude_status: 'skipped',
+      result: 'Claude responding disabled (admin toggle)',
+    }).eq('id', inboundId)
+    return { sent: false, error: 'responding_disabled' }
+  }
+
   // Mark thinking so UI can show the indicator even if Claude is slow.
   await svc.from('sms_messages').update({ claude_status: 'thinking' }).eq('id', inboundId)
 

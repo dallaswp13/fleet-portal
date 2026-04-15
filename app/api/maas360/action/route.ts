@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
+import { isClaudeExecuteActionsEnabled } from '@/lib/appSettings'
 import {
   rebootDevice, wipeDevice, enterKioskMode, exitKioskMode,
   clearAppData, clearDispatchApp, clearPimBluetooth, initiateSupport,
@@ -17,9 +18,13 @@ export async function POST(req: NextRequest) {
   if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const { action, deviceId, vehicleNumber, packageName, confirmed, deviceName } = body as {
+  const { action, deviceId, vehicleNumber, packageName, confirmed, deviceName, caller } = body as {
     action: string; deviceId: string; vehicleNumber?: number
     packageName?: string; confirmed?: boolean; deviceName?: string
+    // caller: 'user' (default, admin clicked a button) | 'claude' (autonomous agent).
+    // Claude-initiated actions are gated by the Execute Actions ON/OFF toggle
+    // in the Claude button popover — see lib/appSettings.ts + migration 034.
+    caller?: 'user' | 'claude'
   }
 
   if (!action || !deviceId) {
@@ -28,6 +33,26 @@ export async function POST(req: NextRequest) {
 
   if (action === 'wipe' && !confirmed) {
     return NextResponse.json({ error: 'Wipe requires confirmed: true' }, { status: 400 })
+  }
+
+  // Runtime kill-switch for Claude-initiated actions. Human-initiated clicks
+  // (the default) always proceed; only autonomous Claude calls are gated.
+  if (caller === 'claude') {
+    const executeEnabled = await isClaudeExecuteActionsEnabled()
+    if (!executeEnabled) {
+      await writeAuditLog({
+        userEmail: user.email!, action,
+        targetType: 'device', targetId: deviceId, vehicleNumber,
+        payload: { deviceId, packageName, caller },
+        result: { blocked: 'Claude execute-actions disabled' },
+        success: false,
+      })
+      return NextResponse.json({
+        success: false,
+        blocked: true,
+        message: 'Claude execute-actions is disabled. Flip the toggle in the Claude button to allow this.',
+      }, { status: 403 })
+    }
   }
 
   let result: { success: boolean; raw: unknown }

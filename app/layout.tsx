@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import Toaster from '@/components/Toaster'
 
 export const viewport = {
   width: 'device-width',
@@ -28,7 +29,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           } catch(e){}
         `}} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Toaster />
+      </body>
     </html>
   )
 }

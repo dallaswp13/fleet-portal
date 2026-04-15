@@ -1,7 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import type { AuditSection, Severity } from '@/lib/audit-checks'
+import { ROW_KEY_FOR_SECTION } from '@/lib/audit-checks'
+import { toast } from '@/components/Toaster'
 
 const SEVERITY_META: Record<Severity, { color: string; label: string; order: number }> = {
   critical: { color: 'var(--red)',    label: 'Critical', order: 0 },
@@ -9,6 +12,14 @@ const SEVERITY_META: Record<Severity, { color: string; label: string; order: num
   medium:   { color: 'var(--amber)',  label: 'Medium',   order: 2 },
   low:      { color: 'var(--text2)',  label: 'Low',      order: 3 },
   info:     { color: 'var(--text3)',  label: 'Info',     order: 4 },
+}
+
+export interface IgnoredItem {
+  section_id: string
+  row_key:    string
+  reason:     string | null
+  ignored_by: string
+  ignored_at: string
 }
 
 function toCSV(rows: Record<string, unknown>[], columns: { key: string; label: string }[]): string {
@@ -33,7 +44,34 @@ function downloadCSV(section: AuditSection) {
   URL.revokeObjectURL(url)
 }
 
-export default function DataAuditorView({ sections, runAt }: { sections: AuditSection[]; runAt: string }) {
+export default function DataAuditorView({
+  sections, runAt, ignoredList = [],
+}: {
+  sections: AuditSection[]
+  runAt: string
+  ignoredList?: IgnoredItem[]
+}) {
+  const router = useRouter()
+  const [pending, startTransition] = useTransition()
+
+  async function setIgnored(action: 'ignore' | 'unignore', sectionId: string, rowKey: string, reason?: string) {
+    const res = await fetch('/api/audit-ignore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, sectionId, rowKey, reason }),
+    })
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '')
+      toast.error(`Failed to ${action}`, { detail: txt.slice(0, 120) || 'Server error' })
+      return
+    }
+    toast.success(action === 'ignore' ? 'Item ignored' : 'Item restored', {
+      detail: action === 'ignore' ? 'Hidden from future audit runs' : 'Will reappear on next run',
+    })
+    // Server components regenerate the sections + ignoredList on refresh.
+    startTransition(() => router.refresh())
+  }
+
   const ordered = [...sections].sort((a, b) => {
     const sa = SEVERITY_META[a.severity].order
     const sb = SEVERITY_META[b.severity].order
@@ -47,6 +85,8 @@ export default function DataAuditorView({ sections, runAt }: { sections: AuditSe
     for (const s of ordered) if (s.count > 0) m[s.id] = true
     return m
   })
+
+  const [showIgnored, setShowIgnored] = useState(false)
 
   const critical = ordered.filter(s => s.severity === 'critical' && s.count > 0)
   const high     = ordered.filter(s => s.severity === 'high'     && s.count > 0)
@@ -63,9 +103,58 @@ export default function DataAuditorView({ sections, runAt }: { sections: AuditSe
         <StatCard label="Passing"         value={cleanCount}                                color="var(--green)" sub={`of ${ordered.length}`} />
       </div>
 
-      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
-        Last run: {new Date(runAt).toLocaleString()} &nbsp;·&nbsp; Reload the page to run again.
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, fontSize: 11, color: 'var(--text3)' }}>
+        <div>
+          Last run: {new Date(runAt).toLocaleString()} &nbsp;·&nbsp; Reload the page to run again.
+        </div>
+        {ignoredList.length > 0 && (
+          <button className="btn-secondary btn-sm" onClick={() => setShowIgnored(v => !v)}>
+            {showIgnored ? 'Hide' : 'Show'} ignored ({ignoredList.length})
+          </button>
+        )}
       </div>
+
+      {/* Ignored items panel — collapsed by default, expanded on demand so
+          the user can un-ignore items when a previous decision goes stale. */}
+      {showIgnored && (
+        <div className="card" style={{ padding: 12, marginBottom: 16, borderLeft: '3px solid var(--text3)' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Ignored items ({ignoredList.length})</div>
+          <div className="table-wrap" style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Section</th>
+                  <th>Row key</th>
+                  <th>Reason</th>
+                  <th>Ignored by</th>
+                  <th>When</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {ignoredList.map(ig => (
+                  <tr key={`${ig.section_id}|${ig.row_key}`}>
+                    <td style={{ fontSize: 11 }}>{ig.section_id}</td>
+                    <td style={{ fontSize: 11, fontFamily: 'var(--font-mono)' }}>{ig.row_key}</td>
+                    <td style={{ fontSize: 11 }}>{ig.reason || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                    <td style={{ fontSize: 11 }}>{ig.ignored_by}</td>
+                    <td style={{ fontSize: 11 }}>{new Date(ig.ignored_at).toLocaleString()}</td>
+                    <td>
+                      <button
+                        className="btn-secondary btn-sm"
+                        disabled={pending}
+                        onClick={() => setIgnored('unignore', ig.section_id, ig.row_key)}
+                      >
+                        Restore
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Sections */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -73,6 +162,11 @@ export default function DataAuditorView({ sections, runAt }: { sections: AuditSe
           const meta = SEVERITY_META[section.severity]
           const isOpen = !!open[section.id]
           const clean  = section.count === 0
+          // Sections not in ROW_KEY_FOR_SECTION (e.g. freshness) don't support
+          // per-row ignoring.
+          const keyFn = ROW_KEY_FOR_SECTION[section.id]
+          // freshness is registered but returns null → still not ignorable.
+          const canIgnore = !!keyFn && keyFn({ probe: 1 }) !== null
           return (
             <div key={section.id} className="card" style={{
               padding: 0,
@@ -100,7 +194,14 @@ export default function DataAuditorView({ sections, runAt }: { sections: AuditSe
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{section.title}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>{section.description}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+                    {section.description}
+                    {section.ignoredCount && section.ignoredCount > 0 ? (
+                      <span style={{ marginLeft: 6, color: 'var(--text3)', fontStyle: 'italic' }}>
+                        ({section.ignoredCount} ignored, hidden)
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <span className="tag" style={{ background: clean ? 'transparent' : `${meta.color}22`, color: clean ? 'var(--green)' : meta.color, borderColor: clean ? 'var(--green)' : meta.color }}>
                   {meta.label.toUpperCase()}
@@ -136,18 +237,39 @@ export default function DataAuditorView({ sections, runAt }: { sections: AuditSe
                           <thead>
                             <tr>
                               {section.columns.map(c => <th key={c.key}>{c.label}</th>)}
+                              {canIgnore && <th style={{ width: 90 }}></th>}
                             </tr>
                           </thead>
                           <tbody>
-                            {section.rows.slice(0, 100).map((r, i) => (
-                              <tr key={i}>
-                                {section.columns.map(c => (
-                                  <td key={c.key} style={{ fontSize: 12 }}>
-                                    {r[c.key] == null || r[c.key] === '' ? <span style={{ color: 'var(--text3)' }}>—</span> : String(r[c.key])}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
+                            {section.rows.slice(0, 100).map((r, i) => {
+                              const rowKey = (r._rowKey as string | undefined) ?? null
+                              return (
+                                <tr key={i}>
+                                  {section.columns.map(c => (
+                                    <td key={c.key} style={{ fontSize: 12 }}>
+                                      {r[c.key] == null || r[c.key] === '' ? <span style={{ color: 'var(--text3)' }}>—</span> : String(r[c.key])}
+                                    </td>
+                                  ))}
+                                  {canIgnore && (
+                                    <td style={{ textAlign: 'right' }}>
+                                      {rowKey ? (
+                                        <button
+                                          className="btn-secondary btn-sm"
+                                          disabled={pending}
+                                          title="Hide from future audit runs"
+                                          onClick={() => {
+                                            const reason = window.prompt('Reason for ignoring this item? (optional)') ?? undefined
+                                            setIgnored('ignore', section.id, rowKey, reason || undefined)
+                                          }}
+                                        >
+                                          Ignore
+                                        </button>
+                                      ) : null}
+                                    </td>
+                                  )}
+                                </tr>
+                              )
+                            })}
                           </tbody>
                         </table>
                       </div>

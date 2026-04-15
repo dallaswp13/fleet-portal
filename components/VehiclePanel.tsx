@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import type { FleetOverview } from '@/types'
 import { fleetColor, officeColor } from '@/lib/filters'
+import { toast } from '@/components/Toaster'
 
 interface Props { vehicle: FleetOverview; onClose: () => void; onSaved?: (updated: FleetOverview) => void }
 type PanelTab = 'vehicle' | 'tablets' | 'driver' | 'notes' | 'messages'
@@ -89,7 +90,19 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
       })
       const data = await res.json()
       setActResults(p => ({ ...p, [key]: { ok: data.success, msg: data.message ?? data.error ?? 'Done' } }))
-    } catch { setActResults(p => ({ ...p, [key]: { ok: false, msg: 'Network error' } })) }
+      // Toast for every M360 call — gives a global, consistent confirmation
+      // no matter which page triggered it. Inline result stays for context.
+      const label = `Vehicle ${v.vehicle_number} · ${action}`
+      if (data.success) {
+        toast.success(`${label} sent`, { detail: data.message ?? 'M360 accepted the request' })
+      } else {
+        toast.error(`${label} failed`, { detail: data.error ?? data.message ?? `HTTP ${res.status}` })
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Network error'
+      setActResults(p => ({ ...p, [key]: { ok: false, msg: 'Network error' } }))
+      toast.error(`Vehicle ${v.vehicle_number} · ${action} failed`, { detail: msg })
+    }
     setLoadingAct(null)
   }
 

@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { toast } from '@/components/Toaster'
 
 /* ── Types ─────────────────────────────────────────────────── */
 interface QuickAction {
@@ -92,7 +93,14 @@ async function m360Action(action: string, deviceId: string, vehicleNumber: numbe
     body: JSON.stringify({ action, deviceId, vehicleNumber, confirmed }),
   })
   const data = await res.json()
-  return { ok: data.success ?? false, msg: data.message ?? data.error ?? 'Unknown response' }
+  const ok = data.success ?? false
+  const msg = data.message ?? data.error ?? 'Unknown response'
+  // Toast the outcome so multi-step flows (Replace Tablet, Surrender, …)
+  // give immediate per-step feedback instead of only surfacing at the end.
+  const label = `Vehicle ${vehicleNumber} · ${action}`
+  if (ok) toast.success(`${label} sent`, { detail: msg })
+  else    toast.error(`${label} failed`, { detail: msg })
+  return { ok, msg }
 }
 
 /* ── Replace Tablet workflow ────────────────────────────────── */

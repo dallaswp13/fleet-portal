@@ -25,6 +25,57 @@ export interface AuditSection {
   /** Natural-language explanation of what would need to be true for this count
    *  to go back to zero. Shown in the UI so Dallas knows how to resolve. */
   remediation?: string
+  /** How many rows were hidden by audit_ignores. Surfaced in the UI so the
+   *  user remembers they're looking at a filtered view. */
+  ignoredCount?: number
+}
+
+/**
+ * Per-section stable key for a row. Used to persist ignores in
+ * public.audit_ignores so a row marked "Ignore" stays hidden on subsequent
+ * runs even though rows are rebuilt from scratch each time.
+ *
+ * The key must be deterministic from the row's content. If the underlying
+ * data changes such that the row wouldn't be computed any more (e.g. the
+ * conflict was resolved), the ignore becomes inert — the row never reappears
+ * anyway. If the conflict comes back with the same key later, the ignore
+ * kicks in again, which is usually what you want for cross-source data.
+ *
+ * Returning null means "this section does not support per-row ignoring"
+ * (e.g. freshness is a summary, not a per-issue view).
+ */
+export const ROW_KEY_FOR_SECTION: Record<string, (row: Record<string, unknown>) => string | null> = {
+  'phone-conflicts':         r => `${r.vehicle}|${r.role}`,
+  'phantom-assignments':     r => `${r.vehicle}|${r.role}`,
+  'duplicate-lines':         r => `${r.phone}`,
+  'unassigned-active-lines': r => `${r.phone}`,
+  'orphan-devices':          r => `${r.name_key ?? r.device_name}`,
+  'vehicles-missing-device': r => `${r.vehicle}`,
+  'drivers-missing-phone':   r => `${r.driver_id}`,
+  // freshness is an overview, not per-issue — don't offer Ignore.
+  'freshness':               () => null,
+}
+
+/** Annotate each row with a `_rowKey` field (ignored by the column renderer
+ *  but read by the UI to wire up the Ignore button), and filter out any row
+ *  whose key appears in `ignoreSet`. Returns a new sections array; inputs
+ *  are not mutated. */
+export function applyIgnores(sections: AuditSection[], ignoreSet: Set<string>): AuditSection[] {
+  return sections.map(s => {
+    const keyFn = ROW_KEY_FOR_SECTION[s.id]
+    if (!keyFn) return s
+    let ignored = 0
+    const kept: Record<string, unknown>[] = []
+    for (const row of s.rows) {
+      const key = keyFn(row)
+      if (key && ignoreSet.has(`${s.id}|${key}`)) {
+        ignored++
+        continue
+      }
+      kept.push(key ? { ...row, _rowKey: key } : row)
+    }
+    return { ...s, rows: kept, count: kept.length, ignoredCount: ignored }
+  })
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

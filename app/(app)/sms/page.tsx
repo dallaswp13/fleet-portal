@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ASC_FLEETS } from '@/lib/filters'
+import { toast } from '@/components/Toaster'
 
 interface SmsMessage {
   id: string
@@ -188,16 +189,73 @@ export default function SmsPage() {
     const supabase = createClient()
     supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', [...ASC_FLEETS]).order('vehicle_number').then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
 
-    // Supabase Realtime: auto-refresh on any sms_messages change so new
-    // inbound texts and outbound auto-replies appear without a page refresh.
+    // Supabase Realtime: apply INSERT / UPDATE events surgically instead of
+    // triggering a full 500-row reload. A full reload happens to work but:
+    //   1. It's slow (flicker + wasted bandwidth).
+    //   2. It races with loadMessages() from other handlers.
+    //   3. If the WebSocket hiccups and drops events, we'd miss updates.
+    //
+    // New strategy:
+    //   - INSERT  → prepend to state if the row isn't already there.
+    //   - UPDATE  → patch the matching row in place.
+    //   - DELETE  → remove from state.
+    //   - On reconnect (SUBSCRIBED event after a drop), do a full reload to
+    //     catch anything we missed during the disconnect window.
+    //   - Safety net: refresh every 60s in case Realtime is silently broken.
+    //
+    // Applies the same normalization as loadMessages() so migration-027-less
+    // environments still render correctly.
+    const OUTBOUND_SENDERS = new Set(['dallas', 'system', 'fleet portal', 'la yellow support'])
+    function normalize(m: Record<string, unknown>): SmsMessage {
+      const senderLower = (m.sender ?? '').toString().trim().toLowerCase()
+      const looksOutbound = OUTBOUND_SENDERS.has(senderLower) || m.action === 'auto_reply' || !!m.recipient_phone
+      const direction = (m.direction as string) ?? (looksOutbound ? 'outbound' : 'inbound')
+      const recipient_phone = (m.recipient_phone as string | null) ?? (looksOutbound ? (m.sender_phone as string | null) : null)
+      return { ...m, direction, recipient_phone } as SmsMessage
+    }
+
+    let subscribedOnce = false
+
     const channel = supabase
       .channel('sms_messages_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sms_messages' }, () => {
-        loadMessages()
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sms_messages' }, (payload) => {
+        const row = normalize(payload.new as Record<string, unknown>)
+        setMessages(prev => {
+          // Skip if we already have it (e.g. our own sendReply just inserted it
+          // via REST and Realtime is telling us about the same row).
+          if (prev.some(m => m.id === row.id)) return prev
+          return [row, ...prev].slice(0, 500)
+        })
       })
-      .subscribe()
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sms_messages' }, (payload) => {
+        const updated = normalize(payload.new as Record<string, unknown>)
+        setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, ...updated } : m))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'sms_messages' }, (payload) => {
+        const oldId = (payload.old as { id?: string })?.id
+        if (!oldId) return
+        setMessages(prev => prev.filter(m => m.id !== oldId))
+      })
+      .subscribe((status) => {
+        // On (re)connect, fetch the full list once so we don't miss any
+        // events that fired while the socket was down.
+        if (status === 'SUBSCRIBED') {
+          if (subscribedOnce) loadMessages({ silent: true })
+          subscribedOnce = true
+        }
+      })
 
-    return () => { supabase.removeChannel(channel) }
+    // Safety net: if Realtime silently stops delivering events (network
+    // partition, auth expiry, Supabase hiccup), a minute-cadence refresh
+    // guarantees inbox freshness without user intervention.
+    const pollInterval = window.setInterval(() => {
+      loadMessages({ silent: true })
+    }, 60_000)
+
+    return () => {
+      supabase.removeChannel(channel)
+      window.clearInterval(pollInterval)
+    }
   }, [])
 
   useEffect(() => {
@@ -215,8 +273,10 @@ export default function SmsPage() {
     }
   }, [messages, selectedConversation])
 
-  async function loadMessages() {
-    setLoadingMsgs(true)
+  async function loadMessages(opts: { silent?: boolean } = {}) {
+    // Silent reloads don't set loadingMsgs → used for Realtime catch-up and
+    // the 60s safety poll, so the inbox doesn't flash a spinner every minute.
+    if (!opts.silent) setLoadingMsgs(true)
     const supabase = createClient()
     const { data } = await supabase.from('sms_messages').select('*').order('received_at', { ascending: false }).limit(500)
     // Normalize: if migration 027 hasn't run, direction/recipient_phone may be missing.
@@ -231,7 +291,7 @@ export default function SmsPage() {
       return { ...m, direction, recipient_phone }
     }) as SmsMessage[]
     setMessages(normalized)
-    setLoadingMsgs(false)
+    if (!opts.silent) setLoadingMsgs(false)
   }
 
   async function loadRules() {
@@ -421,11 +481,15 @@ export default function SmsPage() {
       }).eq('id', msg.id)
 
       setCommitResult({ id: msg.id, ok: data.success, text: data.message ?? data.error })
+      const toastLabel = `Vehicle ${veh.vehicle_number} · ${m360Action}`
+      if (data.success) toast.success(`${toastLabel} sent`, { detail: data.message ?? 'M360 accepted the request' })
+      else              toast.error(`${toastLabel} failed`, { detail: data.error ?? data.message ?? `HTTP ${res.status}` })
       loadMessages()
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error'
       await supabase.from('sms_messages').update({ success: false, result: errMsg }).eq('id', msg.id)
       setCommitResult({ id: msg.id, ok: false, text: errMsg })
+      toast.error(`${m360Action} failed`, { detail: errMsg })
       loadMessages()
     } finally {
       setCommittingId(null)
@@ -630,11 +694,10 @@ export default function SmsPage() {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 10, color: 'var(--text3)' }}>{conv.messageCount} messages</span>
-                  {conv.unprocessedCount > 0 && (
-                    <span style={{ fontSize: 9, background: 'var(--red)', color: 'white', borderRadius: '50%', width: 18, height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>
-                      {conv.unprocessedCount}
-                    </span>
-                  )}
+                  {/* Red unread badges intentionally removed per user request —
+                      they created noise and were never actually tied to a
+                      read/unread state, just an "unprocessed action" counter
+                      that rarely matched what Dallas was looking at. */}
                 </div>
               </div>
             ))
