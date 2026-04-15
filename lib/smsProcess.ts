@@ -17,6 +17,22 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { sendSms, isTwilioConfigured, getTwilioNumber, getMessagingServiceSid } from '@/lib/twilio'
 import { ASC_FLEETS } from '@/lib/filters'
+import { executeM360Action, isClaudeAllowedAction, type ExecM360Result } from '@/lib/maas360Exec'
+
+/**
+ * Map the SMS-facing `intent.action` (e.g. 'reboot_pim') onto the M360 API
+ * action verb ('reboot') plus a flag telling us which device_id to look up.
+ * Mirrors the client-side `resolveM360Action` in app/(app)/sms/page.tsx.
+ */
+function resolveM360Action(smsAction: string): { m360Action: string; isPim: boolean } | null {
+  switch (smsAction) {
+    case 'reboot_driver': return { m360Action: 'reboot', isPim: false }
+    case 'reboot_pim':    return { m360Action: 'reboot', isPim: true }
+    case 'clear_pim_bt':  return { m360Action: 'clear_pim_bt', isPim: true }
+    case 'clear_dispatch':return { m360Action: 'clear_dispatch', isPim: false }
+    default:              return null
+  }
+}
 
 type Svc = SupabaseClient
 
@@ -30,7 +46,10 @@ Extract structured data from their message.
 IMPORTANT patterns to recognize:
 - "Cab#6020" or "Cab #6020" or "cab number 6020" → vehicle_number = "6020"
 - "Lease no:25343" or "Lease #25343" → lease_number (driver ID, typically 5 digits)
-- "NoM" or "NOM" or "no money" or "NoP" or "no payment" or "payment not working" → PIM issue → reboot_pim
+- "NoP" or "no payment" or "payment not working" or "card not working" → PIM (back-seat tablet) → reboot_pim (high confidence)
+- "NoM" or "no meter" or "meter not working" or "meter issue" → METER (physical device, separate from the PIM). Typically NOT remote-fixable. A driver-tablet reboot may help but we should confirm with the driver first. Use action="support_driver" with confidence="low" so a human makes the call; do NOT default to reboot_driver without confirmation.
+- "no money" is AMBIGUOUS — some drivers mean the PIM's "NoM" screen (payment backend down), others literally mean the meter is broken. Use confidence="low" and action="unknown" so a human triages.
+- The METER and the PIM are DIFFERENT devices. Never auto-select a PIM reboot for a message that names the meter.
 - Vehicle numbers are 1-4 digits. Lease numbers are typically 5 digits — do NOT confuse them.
 - If the message is NOT in English, translate it to English and detect the language.
 
@@ -294,6 +313,72 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     if (outErr) console.error('[smsProcess] failed to insert outbound reply row:', outErr.message)
   }
 
+  // 4b. Claude auto-execution of the rule's M360 action.
+  //
+  //   Fires only when:
+  //   - A keyword rule matched (high-confidence intent)
+  //   - The rule's primary action is in the Claude-allowed set
+  //     (reboot / clear_dispatch / clear_pim_bt — see lib/maas360Exec.ts)
+  //   - The vehicle resolved via phone → fleet_overview → device_id
+  //
+  //   The Execute Actions kill-switch in the Claude button popover
+  //   (claude_execute_actions_enabled) is checked inside executeM360Action;
+  //   if it's off, we record the block on the inbound row and no human
+  //   click is prevented — the Execute button on the SMS inbox still works.
+  let m360Outcome: 'executed' | 'failed' | 'blocked' | 'skipped' | null = null
+  let m360Detail: string | null = null
+  let m360Success = false
+  if (ruleMatch && primaryAction) {
+    const mapping = resolveM360Action(primaryAction)
+    if (mapping && isClaudeAllowedAction(mapping.m360Action)) {
+      if (!vehicleId) {
+        m360Outcome = 'skipped'
+        m360Detail  = 'Vehicle not resolved'
+      } else {
+        // fleet_overview is the join view that already carries both device IDs.
+        const { data: veh } = await svc.from('fleet_overview')
+          .select('vehicle_number, m360_device_id, pim_m360_device_id')
+          .eq('vehicle_id', vehicleId)
+          .limit(1).maybeSingle()
+        const deviceId = mapping.isPim
+          ? (veh as { pim_m360_device_id?: string | null } | null)?.pim_m360_device_id ?? null
+          : (veh as { m360_device_id?: string | null }     | null)?.m360_device_id     ?? null
+
+        if (!deviceId) {
+          m360Outcome = 'skipped'
+          m360Detail  = `No ${mapping.isPim ? 'PIM' : 'driver'} device linked to vehicle #${vehicleNum || '?'}`
+        } else {
+          let execResult: ExecM360Result
+          try {
+            execResult = await executeM360Action({
+              action: mapping.m360Action,
+              deviceId,
+              vehicleNumber: veh?.vehicle_number ?? (vehicleNum ? parseInt(vehicleNum) : null),
+              caller: 'claude',
+              actorEmail: 'claude@fleet-portal',
+            })
+          } catch (err) {
+            execResult = {
+              success: false, message: err instanceof Error ? err.message : 'Unknown error',
+              error: 'exec_threw', status: 500,
+            }
+          }
+          if (execResult.blocked) {
+            m360Outcome = 'blocked'
+            m360Detail  = execResult.message
+          } else if (execResult.success) {
+            m360Outcome = 'executed'
+            m360Detail  = `${mapping.m360Action} sent to ${mapping.isPim ? 'PIM' : 'driver'} tablet`
+            m360Success = true
+          } else {
+            m360Outcome = 'failed'
+            m360Detail  = execResult.message || 'M360 call failed'
+          }
+        }
+      }
+    }
+  }
+
   // 5. Update the inbound row
   const resultParts: string[] = []
   if (ruleMatch) resultParts.push(`Rule: ${ruleMatch.name}`)
@@ -301,7 +386,27 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   if (vehicleNum) resultParts.push(`Vehicle: #${vehicleNum}`)
   if (autoReplySent) resultParts.push('Auto-reply sent')
   if (autoReplyError) resultParts.push(`Auto-reply failed: ${autoReplyError}`)
+  if (m360Outcome === 'executed') resultParts.push(`Claude executed: ${m360Detail}`)
+  if (m360Outcome === 'failed')   resultParts.push(`Claude execute failed: ${m360Detail}`)
+  if (m360Outcome === 'blocked')  resultParts.push(`Claude execute blocked: ${m360Detail}`)
+  if (m360Outcome === 'skipped')  resultParts.push(`Claude execute skipped: ${m360Detail}`)
   const result = resultParts.join(' · ') || null
+
+  // Derive the row's boolean success. If the rule had BOTH auto_reply and an
+  // executable action, require both legs to succeed. Claude-execute 'blocked'
+  // is NOT a success — the admin still needs to click Execute.
+  let rowSuccess: boolean | null = null
+  if (ruleActions.includes('auto_reply') && m360Outcome) {
+    rowSuccess = autoReplySent && m360Success
+  } else if (ruleActions.includes('auto_reply')) {
+    rowSuccess = autoReplySent ? true : (autoReplyError ? false : null)
+  } else if (m360Outcome === 'executed') {
+    rowSuccess = true
+  } else if (m360Outcome === 'failed') {
+    rowSuccess = false
+  }
+  // m360Outcome === 'blocked' | 'skipped' → leave success=null so the Execute
+  // button still reads as "not yet handled" and a human can click it.
 
   const update: Record<string, unknown> = {
     action: intent.action,
@@ -313,8 +418,8 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     reason: intent.reason || null,
     rule_name: ruleMatch?.name ?? null,
     result,
-    // For auto_reply rules, we consider the inbound "handled" on success
-    success: ruleActions.includes('auto_reply') ? (autoReplySent ? true : (autoReplyError ? false : null)) : null,
+    success: rowSuccess,
+    claude_status: m360Outcome ?? null,
     processed: true,
     translated_text: intent.translated_text || null,
     source_language: intent.source_language || null,
