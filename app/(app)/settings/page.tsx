@@ -151,7 +151,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <div>
           <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Launch Roadmap</h2>
           <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 24 }}>
-            Remaining items before the site is fully operational.
+            Outstanding items before the site is fully operational.
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -222,79 +222,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 detail: 'Fleet, Inbox, and Quick Actions are usable on desktop only. Tighten breakpoints and add a collapsible sidebar so dispatchers can use the portal on a phone when walking the yard.',
               },
 
-              // ── RECENTLY COMPLETED ────────────────────────────────────────
-              {
-                status: 'done', label: 'Fleet Tab Consolidation',
-                detail: 'Vehicles, Devices, and Verizon now live under a single /fleet section with sub-tabs. Sidebar simplified from 3 entries to 1; legacy /vehicles, /devices, /lines URLs redirect with query params intact.',
-              },
-              {
-                status: 'done', label: 'Quick Actions — Cleanup',
-                detail: 'Replace Driver Tablet and Surrender Vehicle cards removed. Remote Support reworked to deep-link into the M360 portal (TeamViewer launch) — the Webservices API does not expose a remote-control endpoint. Cards unified into a single grid, no more Working vs Pending split.',
-              },
-              {
-                status: 'done', label: 'MaaS360 API — Command Execution',
-                detail: 'Device action endpoints (reboot, wipe, kiosk, clear app data, clear dispatch, clear PIM BT) fully working end-to-end. XML transport + token keepalive stable. Used by both the Quick Actions buttons and the autonomous SMS pipeline.',
-              },
-              {
-                status: 'done', label: 'Twilio SMS — Live (Inbound + Outbound)',
-                detail: 'Inbound via Twilio webhook at /api/sms/webhook, outbound replies from the Inbox via the Twilio REST API. Rule-based auto-reply confirmed end-to-end 2026-04-13. Gmail/Google Voice polling fully removed.',
-              },
-              {
-                status: 'done', label: 'Claude Execute-Actions Kill Switch',
-                detail: 'Runtime flag (migration 034) gates autonomous Claude actions. Allow-list of non-destructive actions (reboot, clear_dispatch, clear_pim_bt, clear_app_data) — wipe and kiosk always require a human.',
-              },
-              {
-                status: 'done', label: 'Available Lines — DB-Side Filtering',
-                detail: 'Migration 025 applied. Available tab uses the get_available_line_norms / count_available_lines RPCs for accurate counts on large datasets.',
-              },
-              {
-                status: 'done', label: 'Dashboard Widgets',
-                detail: 'SMS Activity Feed, Issue Tracker Summary, Verizon Usage Alerts, and Fleet Size Trend chart all live on the home dashboard. Device count fixed to include Surrendered tab scope.',
-              },
-              {
-                status: 'done', label: 'Top Bar Status Indicators',
-                detail: 'Twilio SMS and MaaS360 API status dots live in the top bar with click-to-expand tooltips and recheck. Claude button simplified to Anthropic-only.',
-              },
-              {
-                status: 'done', label: 'Unassociated Devices View',
-                detail: 'Migration 029 added a NOT EXISTS view so the Unassociated filter on /fleet/devices handles 2000+ orphans without hitting PostgREST URL length limits.',
-              },
-              {
-                status: 'done', label: 'SMS Inbox — Two-Way Chat UI',
-                detail: 'iMessage-style bubbles, outbound on the right, auto-reply teal gradient. Conversations grouped by phone with sender labels.',
-              },
-              {
-                status: 'done', label: 'SMS Translation',
-                detail: 'Non-English messages translated via Claude API at ingest (Spanish, Russian, Armenian, Farsi). Original + translation shown side-by-side in the Inbox.',
-              },
-              {
-                status: 'done', label: 'SMS Inbox — Commit & Execute',
-                detail: 'Messages parsed for intent and vehicle. Execute button fires M360 commands directly. Destructive actions require explicit confirmation.',
-              },
-              {
-                status: 'done', label: 'MaaS360 Auth + XML Transport',
-                detail: 'Auth working via XML transport with token cached in Supabase. Keepalive cron runs every 30 min to prevent 60-min token expiry.',
-              },
-              {
-                status: 'done', label: 'Sitewide Filters (Office / Fleet)',
-                detail: 'Office and ASC sub-fleet filters applied server-side across every Fleet sub-view and Drivers.',
-              },
-              {
-                status: 'done', label: 'Server-Side Pagination & Filtering',
-                detail: 'Vehicles, Devices, Verizon, Drivers all filter and paginate in the database with accurate counts.',
-              },
-              {
-                status: 'done', label: 'Verizon Lines — Vehicle Association',
-                detail: 'Phone-norm matching fixed. PIM and Driver phone filters run in the database.',
-              },
-              {
-                status: 'done', label: 'Driver Photos',
-                detail: 'Routed through /api/image-proxy to bypass S3 HTTP/CORS issues.',
-              },
-              {
-                status: 'done', label: 'Export Data — Persistent Preferences',
-                detail: 'Export Data panel remembers column selections and filters between sessions via localStorage.',
-              },
             ] as { status: string; label: string; detail: string }[]).map((item, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, padding: '12px 16px', background: 'var(--bg3)', borderRadius: 'var(--radius-lg)', borderLeft: `3px solid ${item.status === 'done' ? 'var(--green)' : item.status === 'blocked' ? 'var(--red)' : 'var(--amber)'}` }}>
                 <div style={{ fontSize: 16, flexShrink: 0, paddingTop: 1 }}>
@@ -309,7 +236,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           </div>
 
           <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text3)' }}>
-            🟡 To Do &nbsp;·&nbsp; ✅ Done
+            🟡 To Do
           </div>
         </div>
       )}

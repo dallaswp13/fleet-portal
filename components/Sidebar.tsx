@@ -6,12 +6,10 @@ import { createClient } from '@/lib/supabase/client'
 
 const mainNav = [
   { href: '/',          label: 'Dashboard',     icon: '◉'  },
-  { href: '/actions',   label: 'Quick Actions',  icon: '⚡' },
-  { href: '/fleet',     label: 'Fleet',           icon: '🚕' },
-  { href: '/drivers',   label: 'Drivers',         icon: '🧑‍✈️' },
-  { href: '/sms',       label: 'Inbox',            icon: '💬' },
-  { href: '/rylo',      label: 'Rylo Tracker',     icon: '📋' },
-  { href: '/inventory', label: 'Inventory',        icon: '📦' },
+  { href: '/sms',       label: 'Inbox',         icon: '💬' },
+  { href: '/inventory', label: 'Inventory',     icon: '📦' },
+  { href: '/rylo',      label: 'Rylo Tracker',  icon: '📋' },
+  { href: '/fleet',     label: 'Fleet',         icon: '🚕' },
 ]
 
 const settingsNav = [

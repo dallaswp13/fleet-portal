@@ -12,6 +12,7 @@ const TABS = [
   { href: '/fleet/vehicles', label: 'Vehicles', icon: '🚕' },
   { href: '/fleet/devices',  label: 'Devices',  icon: '📱' },
   { href: '/fleet/lines',    label: 'Verizon',  icon: '📡' },
+  { href: '/fleet/drivers',  label: 'Drivers',  icon: '🧑‍✈️' },
 ]
 
 export default function FleetTabs() {

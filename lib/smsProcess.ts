@@ -613,6 +613,19 @@ async function fetchRecentLessons(svc: Svc, limit = 15): Promise<string[]> {
     .filter((s): s is string => !!s && s.length > 0)
 }
 
+async function fetchKnownIssues(svc: Svc): Promise<{ title: string; body: string | null; priority: string }[]> {
+  try {
+    const { data } = await svc.from('issues')
+      .select('title, body, priority')
+      .eq('status', 'open')
+      .order('priority')
+      .limit(20)
+    return (data ?? []) as { title: string; body: string | null; priority: string }[]
+  } catch {
+    return [] // issues table may not exist yet
+  }
+}
+
 async function fetchVehicleContext(svc: Svc, senderPhone: string): Promise<VehicleContext> {
   const empty: VehicleContext = { vehicle_number: null, fleet_id: null, driver_name: null, language_hint: null }
   if (!senderPhone) return empty
@@ -676,13 +689,14 @@ async function generateDriverReply(
     return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'ANTHROPIC_API_KEY not set', needsHuman: true, error: 'no_api_key' }
   }
 
-  const [history, lessons, vehCtx] = await Promise.all([
+  const [history, lessons, vehCtx, knownIssues] = await Promise.all([
     fetchConversationHistory(svc, senderPhone, 10),
     fetchRecentLessons(svc, 15),
     fetchVehicleContext(svc, senderPhone),
+    fetchKnownIssues(svc),
   ])
 
-  // Build dynamic system prompt: base + driver context + lessons.
+  // Build dynamic system prompt: base + driver context + lessons + known issues.
   const contextLines: string[] = []
   if (vehCtx.driver_name)     contextLines.push(`Driver name: ${vehCtx.driver_name}`)
   if (vehCtx.vehicle_number)  contextLines.push(`Vehicle: #${vehCtx.vehicle_number}${vehCtx.fleet_id ? ' (' + vehCtx.fleet_id.toUpperCase() + ')' : ''}`)
@@ -693,12 +707,16 @@ async function generateDriverReply(
     ? `\n\n# Past mistakes to avoid (lessons from Dallas, the fleet manager)\nThese are corrections Dallas left on previous Claude replies. Do NOT repeat these mistakes:\n${lessons.map((l, i) => `${i + 1}. ${l}`).join('\n')}`
     : ''
 
+  const knownIssuesBlock = knownIssues.length
+    ? `\n\n# Known issues (from Rylo Tracker — currently open)\nIf the driver's message relates to any of these, acknowledge the issue and set action to "log_known_issue". Do NOT troubleshoot fleet-wide problems.\n${knownIssues.map((ki, i) => `${i + 1}. [${ki.priority.toUpperCase()}] ${ki.title}${ki.body ? ': ' + ki.body : ''}`).join('\n')}`
+    : ''
+
   // Playbook is the primary training document — prepended so it's the first
   // thing Claude sees after the baseline prompt.
   const playbook = loadPlaybook()
   const playbookBlock = playbook ? `\n\n# Playbook (editable — source of truth)\n${playbook}` : ''
 
-  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock
+  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock
 
   // Build message list from history, then append current user message.
   const messages: { role: 'user' | 'assistant'; content: string }[] = history
@@ -842,6 +860,29 @@ async function handleClaudeConversation(
     outErr = retry.error
   }
   if (outErr) console.error('[smsProcess] failed to insert Claude outbound row:', outErr.message)
+
+  // If Claude flagged this as a known-issue reply, log a note in the Rylo Tracker
+  // with the cab number so Shan and the ops team have a trail.
+  if (result.reason?.includes('log_known_issue') || result.reason?.includes('known_issue')) {
+    try {
+      const cabNum = vehicleNumber ?? null
+      const noteText = `[Auto-logged] Driver${cabNum ? ` (cab #${cabNum})` : ''} reported a known issue via SMS: "${smsText.slice(0, 100)}"`
+      // Find the first open issue to attach the note to. If multiple issues exist,
+      // we attach to the highest-priority one — the driver's message is likely about
+      // the most impactful known problem.
+      const { data: topIssue } = await svc.from('issues')
+        .select('id, notes_log')
+        .eq('status', 'open')
+        .order('priority')
+        .limit(1)
+        .maybeSingle()
+      if (topIssue) {
+        const log = Array.isArray(topIssue.notes_log) ? topIssue.notes_log : []
+        log.unshift({ text: noteText, ts: new Date().toISOString(), author: 'Claude (auto)' })
+        await svc.from('issues').update({ notes_log: log, updated_at: new Date().toISOString() }).eq('id', topIssue.id)
+      }
+    } catch { /* best-effort — don't fail the reply because of logging */ }
+  }
 
   await svc.from('sms_messages').update({ claude_status: 'replied' }).eq('id', inboundId)
   return { sent: true, error: null }

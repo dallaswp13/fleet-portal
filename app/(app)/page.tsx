@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { unstable_cache } from 'next/cache'
 import DashboardCharts from '@/components/DashboardCharts'
 import DashboardStats from '@/components/DashboardStats'
+import QuickActions from '@/components/QuickActions'
 import { SMSActivityFeed, IssueTrackerSummary, VerizonUsageAlerts, FleetTrendChart } from '@/components/DashboardWidgets'
 import { getOfficesFromParam, getTabsFromParam, getAscFleetsFromParam, getFleetIdsFromFilters, OFFICES, SHEET_TABS } from '@/lib/filters'
 
@@ -231,6 +232,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             {allTabs ? 'All vehicles' : tabs.map(t => t === 'Active Vehicles' ? 'Active' : t === 'Test Vehicles' ? 'Test' : 'Surrendered').join(', ')}
           </p>
         </div>
+      </div>
+
+      {/* Quick Actions — moved here from the dedicated /actions page */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)', marginBottom: 10 }}>Quick Actions</div>
+        <QuickActions />
       </div>
 
       <DashboardStats stats={stats} />

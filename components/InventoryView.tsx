@@ -8,32 +8,40 @@ export interface InventoryItem {
   id: string
   name: string
   category: string | null
-  quantity_on_hand: number
+  quantity_new: number
+  quantity_used: number
+  quantity_on_hand: number          // generated: new + used
   low_stock_threshold: number | null
   location: string | null
   notes: string | null
   sort_order: number
   updated_at: string
   updated_by: string | null
+  vendor_name: string | null
+  vendor_company: string | null
+  vendor_email: string | null
 }
 
-/**
- * Editable inventory grid. Admins see inline controls (−/+ quick adjust,
- * Edit / Delete, Add Item); non-admins see a read-only table.
- *
- * Writes hit /api/inventory and then router.refresh() pulls fresh server-
- * rendered rows — the server component is the source of truth.
- */
+export interface ActionCard {
+  id: string; name: string; description: string | null
+  icon: string; color: string; sort_order: number
+  items: { id: string; card_id: string; inventory_item_id: string; quantity: number }[]
+}
+
 export default function InventoryView({
-  initialItems, canEdit,
-}: { initialItems: InventoryItem[]; canEdit: boolean }) {
+  initialItems, initialCards, canEdit,
+}: { initialItems: InventoryItem[]; initialCards: ActionCard[]; canEdit: boolean }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [editing, setEditing] = useState<InventoryItem | null>(null)
   const [adding, setAdding] = useState(false)
+  const [editingCard, setEditingCard] = useState<ActionCard | null>(null)
+  const [addingCard, setAddingCard] = useState(false)
+  const [executingCard, setExecutingCard] = useState<string | null>(null)
 
   const items = initialItems
+  const cards = initialCards
 
   const lowStock = useMemo(
     () => items.filter(i => i.low_stock_threshold != null && i.quantity_on_hand <= i.low_stock_threshold),
@@ -44,14 +52,14 @@ export default function InventoryView({
     [items],
   )
 
-  async function adjust(id: string, delta: number) {
+  async function adjust(id: string, delta: number, field: 'new' | 'used' = 'new') {
     if (!canEdit) return
     setBusyId(id)
     try {
       const res = await fetch('/api/inventory', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, delta }),
+        body: JSON.stringify({ id, delta, field }),
       })
       if (!res.ok) {
         const txt = await res.text().catch(() => '')
@@ -86,12 +94,98 @@ export default function InventoryView({
     }
   }
 
+  async function executeCard(cardId: string, cardName: string) {
+    if (!canEdit) return
+    if (!window.confirm(`Execute "${cardName}"? This will subtract items from inventory.`)) return
+    setExecutingCard(cardId)
+    try {
+      const res = await fetch('/api/inventory/actions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card_id: cardId }),
+      })
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '')
+        toast.error('Execute failed', { detail: txt.slice(0, 120) || `HTTP ${res.status}` })
+      } else {
+        toast.success(`"${cardName}" executed — inventory updated`)
+        startTransition(() => router.refresh())
+      }
+    } finally {
+      setExecutingCard(null)
+    }
+  }
+
+  async function deleteCard(id: string, name: string) {
+    if (!window.confirm(`Delete action card "${name}"?`)) return
+    const res = await fetch('/api/inventory/actions', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    if (!res.ok) toast.error('Delete failed')
+    else { toast.success('Card deleted'); startTransition(() => router.refresh()) }
+  }
+
   return (
     <>
-      {/* Summary strip */}
+      {/* ── ACTION CARDS ──────────────────────────────────────── */}
+      {cards.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text2)' }}>Actions</div>
+            {canEdit && (
+              <button className="btn-secondary btn-sm" onClick={() => setAddingCard(true)} disabled={pending}>
+                + Add action
+              </button>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+            {cards.map(card => {
+              const itemNames = card.items.map(li => {
+                const inv = items.find(i => i.id === li.inventory_item_id)
+                return inv ? `${li.quantity}x ${inv.name}` : `${li.quantity}x unknown`
+              })
+              return (
+                <div key={card.id} className="card" style={{ padding: 14, borderLeft: `3px solid ${card.color}`, position: 'relative' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 20 }}>{card.icon}</span>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{card.name}</div>
+                  </div>
+                  {card.description && <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 6, lineHeight: 1.4 }}>{card.description}</div>}
+                  <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 8 }}>{itemNames.join(', ')}</div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {canEdit && (
+                      <>
+                        <button className="btn-primary btn-sm" style={{ fontSize: 11 }}
+                          disabled={executingCard === card.id || pending}
+                          onClick={() => executeCard(card.id, card.name)}>
+                          {executingCard === card.id ? 'Running…' : 'Execute'}
+                        </button>
+                        <button className="btn-secondary btn-sm" style={{ fontSize: 11 }}
+                          onClick={() => setEditingCard(card)}>Edit</button>
+                        <button className="btn-danger btn-sm" style={{ fontSize: 11 }}
+                          onClick={() => deleteCard(card.id, card.name)}>×</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      {cards.length === 0 && canEdit && (
+        <div style={{ marginBottom: 20 }}>
+          <button className="btn-secondary btn-sm" onClick={() => setAddingCard(true)}>+ Add action card</button>
+          <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>Action cards subtract inventory when executed (e.g. "New Vehicle")</span>
+        </div>
+      )}
+
+      {/* ── SUMMARY STRIP ─────────────────────────────────────── */}
       <div className="grid-stats" style={{ marginBottom: 20 }}>
         <StatCard label="Item types"      value={items.length}          color="var(--blue)" sub="distinct SKUs" />
-        <StatCard label="Total on hand"   value={totalOnHand}           color="var(--green)" sub="all units" />
+        <StatCard label="Total on hand"   value={totalOnHand}           color="var(--green)" sub="new + used" />
         <StatCard label="Low stock"       value={lowStock.length}       color={lowStock.length > 0 ? 'var(--amber)' : 'var(--text3)'} sub="at/below threshold" />
       </div>
 
@@ -106,7 +200,7 @@ export default function InventoryView({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-          {canEdit ? 'Admin view — click the +/− buttons to adjust counts, or Edit to change other fields.' : 'Read-only view.'}
+          {canEdit ? 'Admin view — click +/− to adjust New or Used counts, or Edit to change fields.' : 'Read-only view.'}
         </div>
         {canEdit && (
           <button className="btn-primary btn-sm" onClick={() => setAdding(true)} disabled={pending}>
@@ -115,24 +209,27 @@ export default function InventoryView({
         )}
       </div>
 
+      {/* ── INVENTORY TABLE ───────────────────────────────────── */}
       <div className="table-wrap card" style={{ padding: 0 }}>
         <table>
           <thead>
             <tr>
               <th style={{ width: 30 }} />
               <th>Item</th>
-              <th style={{ width: 130 }}>On hand</th>
-              <th style={{ width: 110 }}>Low-stock</th>
+              <th style={{ width: 100 }}>New</th>
+              <th style={{ width: 100 }}>Used</th>
+              <th style={{ width: 80 }}>On Hand</th>
+              <th style={{ width: 90 }}>Low-stock</th>
+              <th>Vendor</th>
               <th>Location</th>
-              <th>Notes</th>
-              <th style={{ width: 150 }}>Updated</th>
+              <th style={{ width: 140 }}>Updated</th>
               {canEdit && <th style={{ width: 130 }} />}
             </tr>
           </thead>
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={canEdit ? 8 : 7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>
+                <td colSpan={canEdit ? 10 : 9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>
                   No items yet. {canEdit ? 'Click "Add item" to create one.' : ''}
                 </td>
               </tr>
@@ -152,50 +249,27 @@ export default function InventoryView({
                     <div style={{ fontWeight: 600 }}>{i.name}</div>
                     {i.category && <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{i.category}</div>}
                   </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      {canEdit && (
-                        <button
-                          className="btn-secondary btn-sm"
-                          style={{ padding: '2px 8px', minWidth: 28 }}
-                          disabled={busyId === i.id || pending || i.quantity_on_hand <= 0}
-                          onClick={() => adjust(i.id, -1)}
-                          title="Decrement by 1"
-                        >−</button>
-                      )}
-                      <span style={{ fontSize: 18, fontWeight: 700, minWidth: 36, textAlign: 'center', color: isLow ? 'var(--amber)' : 'inherit' }}>
-                        {i.quantity_on_hand}
-                      </span>
-                      {canEdit && (
-                        <button
-                          className="btn-secondary btn-sm"
-                          style={{ padding: '2px 8px', minWidth: 28 }}
-                          disabled={busyId === i.id || pending}
-                          onClick={() => adjust(i.id, 1)}
-                          title="Increment by 1"
-                        >+</button>
-                      )}
-                    </div>
-                  </td>
-                  <td style={{ fontSize: 12, color: 'var(--text3)' }}>
-                    {i.low_stock_threshold == null ? <span>—</span> : `≤ ${i.low_stock_threshold}`}
+                  <td><QtyCell value={i.quantity_new} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'new')} zeroDisable={i.quantity_new <= 0} /></td>
+                  <td><QtyCell value={i.quantity_used} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'used')} zeroDisable={i.quantity_used <= 0} /></td>
+                  <td><span style={{ fontSize: 16, fontWeight: 700, color: isLow ? 'var(--amber)' : 'inherit' }}>{i.quantity_on_hand}</span></td>
+                  <td style={{ fontSize: 12, color: 'var(--text3)' }}>{i.low_stock_threshold == null ? <span>—</span> : `≤ ${i.low_stock_threshold}`}</td>
+                  <td style={{ fontSize: 11 }}>
+                    {i.vendor_name || i.vendor_company ? (
+                      <div>
+                        {i.vendor_name && <div style={{ fontWeight: 500 }}>{i.vendor_name}</div>}
+                        {i.vendor_company && <div style={{ color: 'var(--text3)' }}>{i.vendor_company}</div>}
+                      </div>
+                    ) : <span style={{ color: 'var(--text3)' }}>—</span>}
                   </td>
                   <td style={{ fontSize: 12 }}>{i.location || <span style={{ color: 'var(--text3)' }}>—</span>}</td>
-                  <td style={{ fontSize: 12, maxWidth: 320, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={i.notes ?? ''}>
-                    {i.notes || <span style={{ color: 'var(--text3)' }}>—</span>}
-                  </td>
                   <td style={{ fontSize: 11, color: 'var(--text3)' }}>
                     {new Date(i.updated_at).toLocaleString()}
                     {i.updated_by && <div style={{ fontSize: 10 }}>{i.updated_by}</div>}
                   </td>
                   {canEdit && (
                     <td style={{ textAlign: 'right' }}>
-                      <button className="btn-secondary btn-sm" style={{ marginRight: 4 }} disabled={pending || busyId === i.id} onClick={() => setEditing(i)}>
-                        Edit
-                      </button>
-                      <button className="btn-danger btn-sm" disabled={pending || busyId === i.id} onClick={() => remove(i.id, i.name)}>
-                        Delete
-                      </button>
+                      <button className="btn-secondary btn-sm" style={{ marginRight: 4 }} disabled={pending || busyId === i.id} onClick={() => setEditing(i)}>Edit</button>
+                      <button className="btn-danger btn-sm" disabled={pending || busyId === i.id} onClick={() => remove(i.id, i.name)}>Delete</button>
                     </td>
                   )}
                 </tr>
@@ -206,16 +280,27 @@ export default function InventoryView({
       </div>
 
       {(editing || adding) && (
-        <ItemModal
-          initial={editing}
-          onClose={() => { setEditing(null); setAdding(false) }}
-          onSaved={() => {
-            setEditing(null); setAdding(false)
-            startTransition(() => router.refresh())
-          }}
-        />
+        <ItemModal initial={editing} onClose={() => { setEditing(null); setAdding(false) }}
+          onSaved={() => { setEditing(null); setAdding(false); startTransition(() => router.refresh()) }} />
+      )}
+      {(editingCard || addingCard) && (
+        <CardModal initial={editingCard} inventoryItems={items}
+          onClose={() => { setEditingCard(null); setAddingCard(false) }}
+          onSaved={() => { setEditingCard(null); setAddingCard(false); startTransition(() => router.refresh()) }} />
       )}
     </>
+  )
+}
+
+function QtyCell({ value, canEdit, busy, onAdjust, zeroDisable }: {
+  value: number; canEdit: boolean; busy: boolean; onAdjust: (d: number) => void; zeroDisable: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+      {canEdit && <button className="btn-secondary btn-sm" style={{ padding: '2px 6px', minWidth: 24, fontSize: 13 }} disabled={busy || zeroDisable} onClick={() => onAdjust(-1)}>−</button>}
+      <span style={{ fontSize: 14, fontWeight: 600, minWidth: 28, textAlign: 'center' }}>{value}</span>
+      {canEdit && <button className="btn-secondary btn-sm" style={{ padding: '2px 6px', minWidth: 24, fontSize: 13 }} disabled={busy} onClick={() => onAdjust(1)}>+</button>}
+    </div>
   )
 }
 
@@ -229,98 +314,146 @@ function StatCard({ label, value, color, sub }: { label: string; value: number; 
   )
 }
 
-function ItemModal({
-  initial, onClose, onSaved,
-}: { initial: InventoryItem | null; onClose: () => void; onSaved: () => void }) {
+function ItemModal({ initial, onClose, onSaved }: { initial: InventoryItem | null; onClose: () => void; onSaved: () => void }) {
   const [name, setName]       = useState(initial?.name ?? '')
   const [category, setCategory] = useState(initial?.category ?? '')
-  const [qty, setQty]         = useState(String(initial?.quantity_on_hand ?? 0))
+  const [qtyNew, setQtyNew]   = useState(String(initial?.quantity_new ?? 0))
+  const [qtyUsed, setQtyUsed] = useState(String(initial?.quantity_used ?? 0))
   const [low, setLow]         = useState(initial?.low_stock_threshold == null ? '' : String(initial.low_stock_threshold))
   const [location, setLocation] = useState(initial?.location ?? '')
   const [notes, setNotes]     = useState(initial?.notes ?? '')
   const [sortOrder, setSortOrder] = useState(String(initial?.sort_order ?? 100))
+  const [vendorName, setVendorName]       = useState(initial?.vendor_name ?? '')
+  const [vendorCompany, setVendorCompany] = useState(initial?.vendor_company ?? '')
+  const [vendorEmail, setVendorEmail]     = useState(initial?.vendor_email ?? '')
   const [saving, setSaving]   = useState(false)
 
   async function save() {
-    const qtyNum = parseInt(qty, 10)
+    const qn = parseInt(qtyNew, 10); const qu = parseInt(qtyUsed, 10)
     if (!name.trim()) { toast.error('Name is required'); return }
-    if (!Number.isFinite(qtyNum) || qtyNum < 0) { toast.error('On-hand must be ≥ 0'); return }
+    if (!Number.isFinite(qn) || qn < 0) { toast.error('New qty must be ≥ 0'); return }
+    if (!Number.isFinite(qu) || qu < 0) { toast.error('Used qty must be ≥ 0'); return }
     const lowNum = low.trim() === '' ? null : parseInt(low, 10)
     if (lowNum != null && (!Number.isFinite(lowNum) || lowNum < 0)) { toast.error('Low-stock must be ≥ 0 or blank'); return }
-    const sortNum = parseInt(sortOrder, 10)
-
     setSaving(true)
     try {
       const res = await fetch('/api/inventory', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: initial?.id,
-          name: name.trim(),
-          category: category.trim() || null,
-          quantity_on_hand: qtyNum,
-          low_stock_threshold: lowNum,
-          location: location.trim() || null,
-          notes: notes.trim() || null,
-          sort_order: Number.isFinite(sortNum) ? sortNum : 100,
+          id: initial?.id, name: name.trim(), category: category.trim() || null,
+          quantity_new: qn, quantity_used: qu, low_stock_threshold: lowNum,
+          location: location.trim() || null, notes: notes.trim() || null,
+          sort_order: parseInt(sortOrder) || 100,
+          vendor_name: vendorName.trim() || null, vendor_company: vendorCompany.trim() || null,
+          vendor_email: vendorEmail.trim() || null,
         }),
       })
-      if (!res.ok) {
-        const txt = await res.text().catch(() => '')
-        toast.error('Save failed', { detail: txt.slice(0, 120) || `HTTP ${res.status}` })
-      } else {
-        toast.success(initial ? 'Item updated' : 'Item added')
-        onSaved()
-      }
-    } finally {
-      setSaving(false)
-    }
+      if (!res.ok) { const t = await res.text().catch(() => ''); toast.error('Save failed', { detail: t.slice(0, 120) || `HTTP ${res.status}` }) }
+      else { toast.success(initial ? 'Item updated' : 'Item added'); onSaved() }
+    } finally { setSaving(false) }
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-      }}
-      onClick={onClose}
-    >
-      <div
-        className="card"
-        style={{ padding: 20, minWidth: 420, maxWidth: 560, width: '90%', maxHeight: '85vh', overflowY: 'auto' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>
-          {initial ? 'Edit item' : 'Add item'}
-        </div>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+      <div className="card" style={{ padding: 20, minWidth: 340, maxWidth: 600, width: '92%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{initial ? 'Edit item' : 'Add item'}</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <Field label="Name *">
-            <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. OBD Meter" autoFocus />
-          </Field>
-          <Field label="Category">
-            <input value={category} onChange={e => setCategory(e.target.value)} placeholder="e.g. meters" />
-          </Field>
-          <Field label="On hand *">
-            <input type="number" min={0} value={qty} onChange={e => setQty(e.target.value)} />
-          </Field>
-          <Field label="Low-stock threshold">
-            <input type="number" min={0} value={low} onChange={e => setLow(e.target.value)} placeholder="optional" />
-          </Field>
-          <Field label="Location">
-            <input value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Storeroom A" />
-          </Field>
-          <Field label="Sort order">
-            <input type="number" value={sortOrder} onChange={e => setSortOrder(e.target.value)} />
-          </Field>
-          <Field label="Notes" span={2}>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} style={{ width: '100%', resize: 'vertical' }} />
-          </Field>
+          <Field label="Name *"><input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. OBD Meter" autoFocus /></Field>
+          <Field label="Category"><input value={category} onChange={e => setCategory(e.target.value)} placeholder="e.g. meters" /></Field>
+          <Field label="Qty New *"><input type="number" min={0} value={qtyNew} onChange={e => setQtyNew(e.target.value)} /></Field>
+          <Field label="Qty Used"><input type="number" min={0} value={qtyUsed} onChange={e => setQtyUsed(e.target.value)} /></Field>
+          <Field label="Low-stock threshold"><input type="number" min={0} value={low} onChange={e => setLow(e.target.value)} placeholder="optional" /></Field>
+          <Field label="Location"><input value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Storeroom A" /></Field>
+          <Field label="Sort order"><input type="number" value={sortOrder} onChange={e => setSortOrder(e.target.value)} /></Field>
+          <div />
+          <div style={{ gridColumn: 'span 2', borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor</div>
+          </div>
+          <Field label="Contact Name"><input value={vendorName} onChange={e => setVendorName(e.target.value)} placeholder="John Smith" /></Field>
+          <Field label="Company"><input value={vendorCompany} onChange={e => setVendorCompany(e.target.value)} placeholder="ACME Parts" /></Field>
+          <Field label="Email" span={2}><input type="email" value={vendorEmail} onChange={e => setVendorEmail(e.target.value)} placeholder="vendor@example.com" /></Field>
+          <Field label="Notes" span={2}><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} style={{ width: '100%', resize: 'vertical' }} /></Field>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button className="btn-secondary btn-sm" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn-primary btn-sm" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : (initial ? 'Save' : 'Add')}
-          </button>
+          <button className="btn-primary btn-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : (initial ? 'Save' : 'Add')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CardModal({ initial, inventoryItems, onClose, onSaved }: {
+  initial: ActionCard | null; inventoryItems: InventoryItem[]; onClose: () => void; onSaved: () => void
+}) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [desc, setDesc] = useState(initial?.description ?? '')
+  const [icon, setIcon] = useState(initial?.icon ?? '📦')
+  const [color, setColor] = useState(initial?.color ?? 'var(--accent)')
+  const [sortOrder, setSortOrder] = useState(String(initial?.sort_order ?? 100))
+  const [lineItems, setLineItems] = useState<{ inventory_item_id: string; quantity: number }[]>(
+    initial?.items.map(li => ({ inventory_item_id: li.inventory_item_id, quantity: li.quantity })) ?? []
+  )
+  const [saving, setSaving] = useState(false)
+
+  function addLine() {
+    const usedIds = new Set(lineItems.map(li => li.inventory_item_id))
+    const next = inventoryItems.find(i => !usedIds.has(i.id))
+    if (next) setLineItems([...lineItems, { inventory_item_id: next.id, quantity: 1 }])
+  }
+  function updateLine(idx: number, field: 'inventory_item_id' | 'quantity', val: string | number) {
+    setLineItems(prev => prev.map((li, i) => i === idx ? { ...li, [field]: val } : li))
+  }
+
+  async function save() {
+    if (!name.trim()) { toast.error('Name is required'); return }
+    setSaving(true)
+    try {
+      const res = await fetch('/api/inventory/actions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: initial?.id, name: name.trim(), description: desc.trim() || null,
+          icon: icon.trim() || '📦', color: color.trim() || 'var(--accent)',
+          sort_order: parseInt(sortOrder) || 100,
+          items: lineItems.filter(li => li.inventory_item_id && li.quantity > 0),
+        }),
+      })
+      if (!res.ok) { const t = await res.text().catch(() => ''); toast.error('Save failed', { detail: t.slice(0, 120) }) }
+      else { toast.success(initial ? 'Card updated' : 'Card created'); onSaved() }
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }} onClick={onClose}>
+      <div className="card" style={{ padding: 20, minWidth: 340, maxWidth: 560, width: '92%', maxHeight: '85vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 14 }}>{initial ? 'Edit Action Card' : 'New Action Card'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Name *"><input value={name} onChange={e => setName(e.target.value)} autoFocus placeholder="e.g. New Vehicle" /></Field>
+          <Field label="Icon"><input value={icon} onChange={e => setIcon(e.target.value)} placeholder="🚕" /></Field>
+          <Field label="Color"><input value={color} onChange={e => setColor(e.target.value)} placeholder="var(--green)" /></Field>
+          <Field label="Sort order"><input type="number" value={sortOrder} onChange={e => setSortOrder(e.target.value)} /></Field>
+          <Field label="Description" span={2}><textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ width: '100%', resize: 'vertical' }} placeholder="What does this action do?" /></Field>
+        </div>
+        <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Items to subtract</span>
+            <button className="btn-secondary btn-sm" onClick={addLine} disabled={lineItems.length >= inventoryItems.length}>+ Add line</button>
+          </div>
+          {lineItems.length === 0 && <div style={{ fontSize: 12, color: 'var(--text3)', padding: '8px 0' }}>No items linked yet.</div>}
+          {lineItems.map((li, idx) => (
+            <div key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+              <select value={li.inventory_item_id} onChange={e => updateLine(idx, 'inventory_item_id', e.target.value)} style={{ flex: 1, fontSize: 12 }}>
+                {inventoryItems.map(inv => <option key={inv.id} value={inv.id}>{inv.name}</option>)}
+              </select>
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>×</span>
+              <input type="number" min={1} value={li.quantity} onChange={e => updateLine(idx, 'quantity', parseInt(e.target.value) || 1)} style={{ width: 60, fontSize: 12, textAlign: 'center' }} />
+              <button className="btn-danger btn-sm" style={{ padding: '2px 8px' }} onClick={() => setLineItems(prev => prev.filter((_, i) => i !== idx))}>×</button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button className="btn-secondary btn-sm" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn-primary btn-sm" onClick={save} disabled={saving}>{saving ? 'Saving…' : (initial ? 'Save' : 'Create')}</button>
         </div>
       </div>
     </div>
