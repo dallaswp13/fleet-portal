@@ -110,6 +110,7 @@ input.filter-select {
 .badge-amber  { background: var(--amber-bg);  color: var(--amber);  }
 .badge-blue   { background: var(--blue-bg);   color: var(--blue);   }
 .badge-gray   { background: var(--bg4);       color: var(--text2);  }
+.badge-purple { background: rgba(139, 92, 246, 0.12); color: rgb(139, 92, 246); }
 
 /* Tables */
 .table-wrap { overflow-x: auto; }

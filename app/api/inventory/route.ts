@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { writeAuditLog } from '@/lib/audit'
+import { requireAdmin } from '@/lib/auth'
 
 /**
  * Inventory API — backs the /inventory page.
@@ -8,31 +10,19 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
  *   POST    → create or update an item (admin only)
  *     body:  { id?, name, category?, quantity_new, quantity_used,
  *              low_stock_threshold?, location?, notes?, sort_order?,
- *              vendor_name?, vendor_company?, vendor_email? }
+ *              vendor_name?, vendor_company?, vendor_email?, unit_cost? }
  *   PATCH   → adjust quantity by delta (admin only)
  *     body:  { id, delta, field?: 'new' | 'used' }
  *       field defaults to 'new'. Adjusts quantity_new or quantity_used.
  *   DELETE  → remove an item (admin only)
  *     body:  { id }
  *
- * Table: public.inventory_items (migration 035 + 036).
+ * Table: public.inventory_items (migration 035 + 036 + 037).
  * quantity_on_hand is a generated column = quantity_new + quantity_used.
+ * All changes are logged to audit_log with target_type = 'inventory'.
  */
 
-async function requireAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized', status: 401 as const, user: null }
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .maybeSingle()
-  if (!profile?.is_admin) return { error: 'Forbidden', status: 403 as const, user: null }
-  return { error: null, status: 200 as const, user }
-}
-
-const ITEM_COLS = 'id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email'
+const ITEM_COLS = 'id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost'
 
 export async function GET() {
   const supabase = await createClient()
@@ -59,6 +49,7 @@ export async function POST(req: NextRequest) {
     low_stock_threshold?: number | null
     location?: string | null; notes?: string | null; sort_order?: number
     vendor_name?: string | null; vendor_company?: string | null; vendor_email?: string | null
+    unit_cost?: number | null
   }
   try { body = await req.json() }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
@@ -73,7 +64,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'quantities must be non-negative' }, { status: 400 })
   }
 
+  const unitCost = typeof body.unit_cost === 'number' && Number.isFinite(body.unit_cost) && body.unit_cost >= 0
+    ? Math.round(body.unit_cost * 100) / 100 : null
+
   const svc = await createServiceClient()
+  const userEmail = auth.user!.email ?? auth.user!.id
+
   const row: Record<string, unknown> = {
     name: body.name.trim(),
     category: body.category?.trim() || null,
@@ -87,19 +83,46 @@ export async function POST(req: NextRequest) {
     vendor_name: body.vendor_name?.trim() || null,
     vendor_company: body.vendor_company?.trim() || null,
     vendor_email: body.vendor_email?.trim() || null,
-    updated_by: auth.user!.email ?? auth.user!.id,
+    unit_cost: unitCost,
+    updated_by: userEmail,
     updated_at: new Date().toISOString(),
   }
 
   if (body.id) {
+    // Fetch old values for audit diff
+    const { data: old } = await svc.from('inventory_items')
+      .select(ITEM_COLS).eq('id', body.id).single()
+
     const { data, error } = await svc.from('inventory_items')
       .update(row).eq('id', body.id).select(ITEM_COLS).single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Audit log — item updated
+    writeAuditLog({
+      userEmail,
+      action: 'inventory_update',
+      targetType: 'inventory',
+      targetId: body.id,
+      payload: { name: body.name.trim(), changes: diffFields(old, data) },
+      result: { quantity_new: data.quantity_new, quantity_used: data.quantity_used, unit_cost: data.unit_cost },
+      success: true,
+    })
     return NextResponse.json({ item: data })
   } else {
     const { data, error } = await svc.from('inventory_items')
       .insert(row).select(ITEM_COLS).single()
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    // Audit log — item created
+    writeAuditLog({
+      userEmail,
+      action: 'inventory_create',
+      targetType: 'inventory',
+      targetId: data.id,
+      payload: { name: data.name, quantity_new: qtyNew, quantity_used: qtyUsed, unit_cost: unitCost },
+      result: null,
+      success: true,
+    })
     return NextResponse.json({ item: data })
   }
 }
@@ -118,9 +141,10 @@ export async function PATCH(req: NextRequest) {
 
   const field = body.field === 'used' ? 'quantity_used' : 'quantity_new'
   const svc = await createServiceClient()
+  const userEmail = auth.user!.email ?? auth.user!.id
 
   const { data: current, error: readErr } = await svc.from('inventory_items')
-    .select('quantity_new, quantity_used').eq('id', body.id).single()
+    .select('name, quantity_new, quantity_used').eq('id', body.id).single()
   if (readErr || !current) {
     return NextResponse.json({ error: readErr?.message ?? 'Item not found' }, { status: 404 })
   }
@@ -131,13 +155,25 @@ export async function PATCH(req: NextRequest) {
   const { data, error } = await svc.from('inventory_items')
     .update({
       [field]: next,
-      updated_by: auth.user!.email ?? auth.user!.id,
+      updated_by: userEmail,
       updated_at: new Date().toISOString(),
     })
     .eq('id', body.id)
     .select(ITEM_COLS)
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Audit log — quantity adjusted
+  writeAuditLog({
+    userEmail,
+    action: 'inventory_adjust',
+    targetType: 'inventory',
+    targetId: body.id,
+    payload: { name: current.name, field: body.field ?? 'new', delta: body.delta, previous: currentVal, new_value: next },
+    result: { quantity_new: data.quantity_new, quantity_used: data.quantity_used },
+    success: true,
+  })
+
   return NextResponse.json({ item: data })
 }
 
@@ -152,7 +188,42 @@ export async function DELETE(req: NextRequest) {
   if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
   const svc = await createServiceClient()
+  const userEmail = auth.user!.email ?? auth.user!.id
+
+  // Fetch name for audit
+  const { data: item } = await svc.from('inventory_items')
+    .select('name').eq('id', body.id).single()
+
   const { error } = await svc.from('inventory_items').delete().eq('id', body.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Audit log — item deleted
+  writeAuditLog({
+    userEmail,
+    action: 'inventory_delete',
+    targetType: 'inventory',
+    targetId: body.id,
+    payload: { name: item?.name ?? 'unknown' },
+    result: null,
+    success: true,
+  })
+
   return NextResponse.json({ ok: true })
+}
+
+/** Compare two objects and return only changed fields (old → new) */
+function diffFields(
+  old: Record<string, unknown> | null,
+  next: Record<string, unknown> | null,
+): Record<string, { from: unknown; to: unknown }> {
+  if (!old || !next) return {}
+  const diff: Record<string, { from: unknown; to: unknown }> = {}
+  const keys = new Set([...Object.keys(old), ...Object.keys(next)])
+  for (const k of keys) {
+    if (k === 'id' || k === 'updated_at' || k === 'updated_by') continue
+    if (JSON.stringify(old[k]) !== JSON.stringify(next[k])) {
+      diff[k] = { from: old[k], to: next[k] }
+    }
+  }
+  return diff
 }

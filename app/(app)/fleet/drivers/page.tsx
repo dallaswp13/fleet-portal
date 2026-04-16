@@ -51,23 +51,26 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     return q
   }
 
-  // Get counts for tabs (use head: true for count-only queries)
-  const [{ count: activeCount }, { count: inactiveCount }, { count: allCount }] = await Promise.all([
-    supabase.from('drivers').select('*', { count: 'exact', head: true })
-      .eq('active', true)
-      .then(r => r),
-    supabase.from('drivers').select('*', { count: 'exact', head: true })
-      .eq('active', false)
-      .then(r => r),
-    supabase.from('drivers').select('*', { count: 'exact', head: true })
-      .then(r => r),
-  ])
+  // Get counts for tabs — respect fleet/office filters and run in parallel with main query
+  function countQuery(activeFilter?: boolean) {
+    let q = supabase.from('drivers').select('*', { count: 'exact', head: true })
+    if (activeFilter !== undefined) q = q.eq('active', activeFilter)
+    if (fleetIds !== null && fleetIds.length > 0) q = q.in('fleet_id', fleetIds)
+    else if (fleetIds !== null && fleetIds.length === 0) q = q.eq('fleet_id', '___NONE___')
+    return q
+  }
 
   // Build main paginated query
   let query = buildQuery(tab === 'active' ? true : tab === 'inactive' ? false : undefined)
   query = query.order('name').range(page * PER_PAGE, (page + 1) * PER_PAGE - 1)
 
-  const { data: drivers, count: filteredCount } = await query
+  // Run all queries in parallel
+  const [{ count: activeCount }, { count: inactiveCount }, { count: allCount }, { data: drivers, count: filteredCount }] = await Promise.all([
+    countQuery(true),
+    countQuery(false),
+    countQuery(),
+    query,
+  ])
 
   const totalPages = Math.ceil((filteredCount ?? 0) / PER_PAGE)
 

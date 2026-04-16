@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 export async function writeAuditLog(params: {
   userEmail: string
   action: string
-  targetType: 'device' | 'sim'
+  targetType: string          // 'device' | 'sim' | 'inventory' | ...
   targetId: string
   vehicleNumber?: number | null
   payload?: Record<string, unknown>

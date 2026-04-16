@@ -20,6 +20,7 @@ export interface InventoryItem {
   vendor_name: string | null
   vendor_company: string | null
   vendor_email: string | null
+  unit_cost: number | null
 }
 
 export interface ActionCard {
@@ -49,6 +50,10 @@ export default function InventoryView({
   )
   const totalOnHand = useMemo(
     () => items.reduce((sum, i) => sum + (i.quantity_on_hand || 0), 0),
+    [items],
+  )
+  const totalValue = useMemo(
+    () => items.reduce((sum, i) => sum + (i.unit_cost != null ? i.unit_cost * i.quantity_on_hand : 0), 0),
     [items],
   )
 
@@ -186,6 +191,7 @@ export default function InventoryView({
       <div className="grid-stats" style={{ marginBottom: 20 }}>
         <StatCard label="Item types"      value={items.length}          color="var(--blue)" sub="distinct SKUs" />
         <StatCard label="Total on hand"   value={totalOnHand}           color="var(--green)" sub="new + used" />
+        <StatCard label="Total value"     value={`$${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} color="var(--text1)" sub="on-hand × unit cost" />
         <StatCard label="Low stock"       value={lowStock.length}       color={lowStock.length > 0 ? 'var(--amber)' : 'var(--text3)'} sub="at/below threshold" />
       </div>
 
@@ -219,6 +225,7 @@ export default function InventoryView({
               <th style={{ width: 100 }}>New</th>
               <th style={{ width: 100 }}>Used</th>
               <th style={{ width: 80 }}>On Hand</th>
+              <th style={{ width: 90 }}>Unit Cost</th>
               <th style={{ width: 90 }}>Low-stock</th>
               <th>Vendor</th>
               <th>Location</th>
@@ -229,7 +236,7 @@ export default function InventoryView({
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td colSpan={canEdit ? 10 : 9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>
+                <td colSpan={canEdit ? 11 : 10} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>
                   No items yet. {canEdit ? 'Click "Add item" to create one.' : ''}
                 </td>
               </tr>
@@ -252,6 +259,7 @@ export default function InventoryView({
                   <td><QtyCell value={i.quantity_new} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'new')} zeroDisable={i.quantity_new <= 0} /></td>
                   <td><QtyCell value={i.quantity_used} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'used')} zeroDisable={i.quantity_used <= 0} /></td>
                   <td><span style={{ fontSize: 16, fontWeight: 700, color: isLow ? 'var(--amber)' : 'inherit' }}>{i.quantity_on_hand}</span></td>
+                  <td style={{ fontSize: 12, color: 'var(--text2)' }}>{i.unit_cost != null ? `$${i.unit_cost.toFixed(2)}` : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                   <td style={{ fontSize: 12, color: 'var(--text3)' }}>{i.low_stock_threshold == null ? <span>—</span> : `≤ ${i.low_stock_threshold}`}</td>
                   <td style={{ fontSize: 11 }}>
                     {i.vendor_name || i.vendor_company ? (
@@ -304,7 +312,7 @@ function QtyCell({ value, canEdit, busy, onAdjust, zeroDisable }: {
   )
 }
 
-function StatCard({ label, value, color, sub }: { label: string; value: number; color: string; sub: string }) {
+function StatCard({ label, value, color, sub }: { label: string; value: number | string; color: string; sub: string }) {
   return (
     <div className="card" style={{ padding: 14, borderLeft: `3px solid ${color}` }}>
       <div style={{ fontSize: 11, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</div>
@@ -323,6 +331,7 @@ function ItemModal({ initial, onClose, onSaved }: { initial: InventoryItem | nul
   const [location, setLocation] = useState(initial?.location ?? '')
   const [notes, setNotes]     = useState(initial?.notes ?? '')
   const [sortOrder, setSortOrder] = useState(String(initial?.sort_order ?? 100))
+  const [unitCost, setUnitCost]           = useState(initial?.unit_cost != null ? String(initial.unit_cost) : '')
   const [vendorName, setVendorName]       = useState(initial?.vendor_name ?? '')
   const [vendorCompany, setVendorCompany] = useState(initial?.vendor_company ?? '')
   const [vendorEmail, setVendorEmail]     = useState(initial?.vendor_email ?? '')
@@ -335,6 +344,8 @@ function ItemModal({ initial, onClose, onSaved }: { initial: InventoryItem | nul
     if (!Number.isFinite(qu) || qu < 0) { toast.error('Used qty must be ≥ 0'); return }
     const lowNum = low.trim() === '' ? null : parseInt(low, 10)
     if (lowNum != null && (!Number.isFinite(lowNum) || lowNum < 0)) { toast.error('Low-stock must be ≥ 0 or blank'); return }
+    const costNum = unitCost.trim() === '' ? null : parseFloat(unitCost)
+    if (costNum != null && (!Number.isFinite(costNum) || costNum < 0)) { toast.error('Unit cost must be ≥ 0 or blank'); return }
     setSaving(true)
     try {
       const res = await fetch('/api/inventory', {
@@ -343,7 +354,7 @@ function ItemModal({ initial, onClose, onSaved }: { initial: InventoryItem | nul
           id: initial?.id, name: name.trim(), category: category.trim() || null,
           quantity_new: qn, quantity_used: qu, low_stock_threshold: lowNum,
           location: location.trim() || null, notes: notes.trim() || null,
-          sort_order: parseInt(sortOrder) || 100,
+          sort_order: parseInt(sortOrder) || 100, unit_cost: costNum,
           vendor_name: vendorName.trim() || null, vendor_company: vendorCompany.trim() || null,
           vendor_email: vendorEmail.trim() || null,
         }),
@@ -364,8 +375,8 @@ function ItemModal({ initial, onClose, onSaved }: { initial: InventoryItem | nul
           <Field label="Qty Used"><input type="number" min={0} value={qtyUsed} onChange={e => setQtyUsed(e.target.value)} /></Field>
           <Field label="Low-stock threshold"><input type="number" min={0} value={low} onChange={e => setLow(e.target.value)} placeholder="optional" /></Field>
           <Field label="Location"><input value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Storeroom A" /></Field>
+          <Field label="Unit Cost ($)"><input type="number" min={0} step="0.01" value={unitCost} onChange={e => setUnitCost(e.target.value)} placeholder="0.00" /></Field>
           <Field label="Sort order"><input type="number" value={sortOrder} onChange={e => setSortOrder(e.target.value)} /></Field>
-          <div />
           <div style={{ gridColumn: 'span 2', borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 4 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Vendor</div>
           </div>

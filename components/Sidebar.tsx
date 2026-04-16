@@ -27,7 +27,7 @@ export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isA
     router.push('/login')
   }
 
-  const isSettings = pathname === '/settings' || pathname === '/audit'
+  const isSettings = pathname === '/settings'
 
   return (
     <aside className="sidebar">

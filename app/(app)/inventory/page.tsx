@@ -29,7 +29,7 @@ export default async function InventoryPage() {
 
   // Fetch inventory items with new/used split + vendor columns
   const { data, error } = await svc.from('inventory_items')
-    .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email')
+    .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true })
 

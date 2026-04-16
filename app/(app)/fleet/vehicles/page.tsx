@@ -108,12 +108,15 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
     }
   }
 
-  const [{ data, error, count }, { data: appVerData }] = await Promise.all([
+  // Fetch main query + distinct app versions in parallel
+  // Using separate distinct queries is faster than fetching 3000 rows and deduping client-side
+  const [{ data, error, count }, { data: driverVerData }, { data: pimVerData }] = await Promise.all([
     query,
-    supabase.from('fleet_overview').select('driver_app_version, pim_app_version').not('driver_app_version', 'is', null).limit(3000),
+    supabase.from('fleet_overview').select('driver_app_version').not('driver_app_version', 'is', null).limit(100),
+    supabase.from('fleet_overview').select('pim_app_version').not('pim_app_version', 'is', null).limit(100),
   ])
-  const driverAppVersions = Array.from(new Set((appVerData ?? []).map(r => r.driver_app_version).filter(Boolean))).sort() as string[]
-  const pimAppVersions    = Array.from(new Set((appVerData ?? []).map(r => r.pim_app_version).filter(Boolean))).sort() as string[]
+  const driverAppVersions = Array.from(new Set((driverVerData ?? []).map(r => r.driver_app_version).filter(Boolean))).sort() as string[]
+  const pimAppVersions    = Array.from(new Set((pimVerData ?? []).map(r => r.pim_app_version).filter(Boolean))).sort() as string[]
 
   if (error) return (
     <div className="page-content">

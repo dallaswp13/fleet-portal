@@ -186,19 +186,20 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
     }
   }
 
-  // Get available line count for the tab badge (uses RPC if available)
-  let availableCount = 0
-  try {
-    const { data: countData } = await supabase.rpc('count_available_lines', {
-      p_offices: officeList.length > 0 && officeList.length < 4 ? officeList : null,
-    })
-    if (typeof countData === 'number') availableCount = countData
-  } catch {
-    // RPC not available — estimate from JS (may be inaccurate for large datasets)
-    // Can't easily compute without fetching all lines, so leave as 0
+  // Run main query and available-line count in parallel
+  async function getAvailableCount(): Promise<number> {
+    try {
+      const { data: countData } = await supabase.rpc('count_available_lines', {
+        p_offices: officeList.length > 0 && officeList.length < 4 ? officeList : null,
+      })
+      return typeof countData === 'number' ? countData : 0
+    } catch { return 0 }
   }
 
-  const { data: rawLines, count: dbCount } = await query
+  const [{ data: rawLines, count: dbCount }, availableCount] = await Promise.all([
+    query,
+    getAvailableCount(),
+  ])
 
   // Join vehicle data for display
   const lines = (rawLines ?? []).map(l => {

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { writeAuditLog } from '@/lib/audit'
+import { requireAdmin } from '@/lib/auth'
 
 /**
  * Inventory Action Cards API
@@ -9,19 +11,6 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
  *   DELETE → remove a card (admin only)
  *   PATCH  → execute a card (subtract items from inventory) (admin only)
  */
-
-async function requireAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Unauthorized', status: 401 as const, user: null }
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .maybeSingle()
-  if (!profile?.is_admin) return { error: 'Forbidden', status: 403 as const, user: null }
-  return { error: null, status: 200 as const, user }
-}
 
 export async function GET() {
   const supabase = await createClient()
@@ -110,6 +99,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Audit log — card created/updated
+  const userEmail = auth.user!.email ?? auth.user!.id
+  writeAuditLog({
+    userEmail,
+    action: body.id ? 'inventory_card_update' : 'inventory_card_create',
+    targetType: 'inventory',
+    targetId: cardId,
+    payload: { card_name: body.name.trim(), items_count: (body.items ?? []).filter(li => li.quantity > 0).length },
+    result: null,
+    success: true,
+  })
+
   return NextResponse.json({ ok: true, id: cardId })
 }
 
@@ -162,6 +163,21 @@ export async function PATCH(req: NextRequest) {
     results.push({ item_id: li.inventory_item_id, subtracted: li.quantity, remaining: newQty + usedQty })
   }
 
+  // Audit log — card executed
+  const userEmail = auth.user!.email ?? auth.user!.id
+  // Get card name for the log
+  const { data: cardInfo } = await svc.from('inventory_action_cards')
+    .select('name').eq('id', body.card_id).single()
+  writeAuditLog({
+    userEmail,
+    action: 'inventory_card_execute',
+    targetType: 'inventory',
+    targetId: body.card_id,
+    payload: { card_name: cardInfo?.name ?? 'unknown', items_subtracted: results },
+    result: { total_items_affected: results.length },
+    success: true,
+  })
+
   return NextResponse.json({ ok: true, results })
 }
 
@@ -176,7 +192,24 @@ export async function DELETE(req: NextRequest) {
   if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
 
   const svc = await createServiceClient()
+
+  // Fetch name for audit
+  const { data: cardInfo } = await svc.from('inventory_action_cards')
+    .select('name').eq('id', body.id).single()
+
   const { error } = await svc.from('inventory_action_cards').delete().eq('id', body.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Audit log — card deleted
+  writeAuditLog({
+    userEmail: auth.user!.email ?? auth.user!.id,
+    action: 'inventory_card_delete',
+    targetType: 'inventory',
+    targetId: body.id,
+    payload: { card_name: cardInfo?.name ?? 'unknown' },
+    result: null,
+    success: true,
+  })
+
   return NextResponse.json({ ok: true })
 }

@@ -107,12 +107,14 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     .select('*', { count: 'exact', head: true })
   const unassociatedCount = unassocCount ?? 0
 
-  const [{ data, count }, { data: filterData }] = await Promise.all([
+  // Fetch main query + distinct filter values in parallel (faster than 3000-row scan)
+  const [{ data, count }, { data: osData }, { data: policyData }] = await Promise.all([
     query,
-    supabase.from('devices').select('android_os, m360_policy').not('android_os', 'is', null).limit(3000),
+    supabase.from('devices').select('android_os').not('android_os', 'is', null).limit(100),
+    supabase.from('devices').select('m360_policy').not('m360_policy', 'is', null).limit(100),
   ])
-  const osValues     = Array.from(new Set((filterData ?? []).map(d => d.android_os).filter(Boolean))).sort() as string[]
-  const policyValues = Array.from(new Set((filterData ?? []).map(d => d.m360_policy).filter(Boolean))).sort() as string[]
+  const osValues     = Array.from(new Set((osData ?? []).map(d => d.android_os).filter(Boolean))).sort() as string[]
+  const policyValues = Array.from(new Set((policyData ?? []).map(d => d.m360_policy).filter(Boolean))).sort() as string[]
 
   return (
     <div className="page-content">
