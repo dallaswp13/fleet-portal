@@ -33,8 +33,6 @@ interface ParseProgress {
  */
 async function renderPdfPages(pdfBuffer: ArrayBuffer): Promise<Buffer[]> {
   // pdfjs-dist is ESM-only; dynamic import of .mjs build for Node.js compat.
-  // The .mjs path has no TS declarations — suppress TS2307.
-  // @ts-expect-error — pdfjs-dist/legacy/build/pdf.mjs has no type declarations
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
 
