@@ -89,6 +89,12 @@ function normalizePhone(phone: string | null | undefined): string {
   return cleaned
 }
 
+function formatPhone(phone: string): string {
+  const d = normalizePhone(phone)
+  if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`
+  return phone
+}
+
 function VehicleSearch({ vehicles, value, onChange }: {
   vehicles: { id: string; vehicle_number: number; fleet_id: string }[]
   value: string
@@ -134,7 +140,8 @@ function VehicleSearch({ vehicles, value, onChange }: {
 
 interface Conversation {
   phone: string
-  displayName: string | null
+  displayName: string | null   // city/state from Twilio (secondary context)
+  vehicleMatch: string | null  // vehicle number from resolved messages
   lastMessage: SmsMessage
   messageCount: number
   unprocessedCount: number
@@ -338,9 +345,12 @@ export default function SmsPage() {
       const inboundSender = data.messages
         .find(m => m.direction === 'inbound' && m.sender && !OUTBOUND_SENDER_LABELS.has(m.sender.toLowerCase().trim()))
         ?.sender ?? null
+      // Find the most recent vehicle number from any message in the thread
+      const vehicleMatch = data.messages.find(m => m.vehicle_number)?.vehicle_number ?? null
       return {
         phone,
         displayName: inboundSender,
+        vehicleMatch,
         lastMessage,
         messageCount: data.messages.length,
         unprocessedCount,
@@ -681,23 +691,25 @@ export default function SmsPage() {
                 onMouseEnter={e => (e.currentTarget.style.background = selectedConversation === conv.phone ? 'var(--bg3)' : 'var(--bg3)')}
                 onMouseLeave={e => (e.currentTarget.style.background = selectedConversation === conv.phone ? 'var(--bg3)' : 'transparent')}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-                  <div style={{ fontSize: 12, fontWeight: 500 }}>
-                    {conv.displayName || conv.phone}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>
+                    {formatPhone(conv.phone)}
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap', marginLeft: 8 }}>
                     {new Date(conv.lastMessage.received_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 4 }}>
-                  {conv.lastMessage.translated_text || conv.lastMessage.sms_text}
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3, display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {conv.displayName && <span>{conv.displayName}</span>}
+                  {conv.vehicleMatch && (
+                    <span style={{ color: 'var(--blue)', fontWeight: 500 }}>
+                      vehicle #{conv.vehicleMatch}
+                    </span>
+                  )}
+                  {!conv.displayName && !conv.vehicleMatch && <span>{conv.messageCount} messages</span>}
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: 'var(--text3)' }}>{conv.messageCount} messages</span>
-                  {/* Red unread badges intentionally removed per user request —
-                      they created noise and were never actually tied to a
-                      read/unread state, just an "unprocessed action" counter
-                      that rarely matched what Dallas was looking at. */}
+                <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {conv.lastMessage.translated_text || conv.lastMessage.sms_text}
                 </div>
               </div>
             ))
@@ -713,10 +725,18 @@ export default function SmsPage() {
             <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
               <div style={{ marginBottom: 12 }}>
                 <h2 style={{ margin: '0 0 4px 0', fontSize: 16 }}>
-                  {selectedConv.displayName || selectedConv.phone}
+                  {formatPhone(selectedConv.phone)}
                 </h2>
-                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  {selectedConv.phone} · {selectedConv.messageCount} messages
+                <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {selectedConv.displayName && <span>{selectedConv.displayName}</span>}
+                  {selectedConv.displayName && <span>·</span>}
+                  <span>{selectedConv.messageCount} messages</span>
+                  {selectedConv.vehicleMatch && (
+                    <>
+                      <span>·</span>
+                      <span style={{ color: 'var(--blue)', fontWeight: 500 }}>vehicle #{selectedConv.vehicleMatch}</span>
+                    </>
+                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -753,7 +773,8 @@ export default function SmsPage() {
                   {/* Sender label for inbound messages */}
                   {!isOutbound && (
                     <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 2, marginLeft: 4 }}>
-                      {msg.sender || 'Unknown'}
+                      {formatPhone(msg.sender_phone || '')}
+                      {msg.sender && <span style={{ fontWeight: 400, marginLeft: 4 }}>· {msg.sender}</span>}
                     </div>
                   )}
                   {isAutoReply && (

@@ -254,6 +254,36 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     }
   }
 
+  // If we still don't have a vehicle number, check recent messages from the same
+  // sender. Drivers often send fragmented texts: "I need help" → "6675" → "NOP".
+  // The vehicle number from an earlier message should carry forward.
+  if (!vehicleNum && senderPhone) {
+    const { data: recentMsgs } = await svc.from('sms_messages')
+      .select('vehicle_number, sms_text')
+      .eq('sender_phone', senderPhone)
+      .neq('id', messageId)
+      .order('received_at', { ascending: false })
+      .limit(10)
+    if (recentMsgs) {
+      // First, check if any recent message already resolved a vehicle number
+      for (const msg of recentMsgs) {
+        if (msg.vehicle_number) {
+          vehicleNum = String(msg.vehicle_number)
+          break
+        }
+      }
+      // If not found via stored vehicle_number, try extracting from message text
+      if (!vehicleNum) {
+        for (const msg of recentMsgs) {
+          if (msg.sms_text) {
+            const extracted = extractVehicleNumber(msg.sms_text)
+            if (extracted) { vehicleNum = extracted; break }
+          }
+        }
+      }
+    }
+  }
+
   // If we don't have a vehicle yet but did extract a number from text, try that
   if (!vehicleId && vehicleNum) {
     const { data: vehicleByNum } = await svc.from('vehicles')
