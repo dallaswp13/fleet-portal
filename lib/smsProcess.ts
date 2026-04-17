@@ -231,25 +231,50 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   let vehicleNum = intent.vehicle_number
 
   if (senderPhone) {
-    const { data: vehicleByPhone } = await svc.from('vehicles')
-      .select('id, vehicle_number, fleet_id, vehicle_name_key')
-      .or(`driver_phone_norm.eq.${senderPhone},pim_phone_norm.eq.${senderPhone}`)
-      .in('fleet_id', ASC_FLEET_IDS)
-      .limit(1).maybeSingle()
-    if (vehicleByPhone) {
-      vehicleId = vehicleByPhone.id
-      vehicleNameKey = vehicleByPhone.vehicle_name_key
-      if (!vehicleNum) vehicleNum = String(vehicleByPhone.vehicle_number)
-    }
-
+    // Look up driver by personal phone
     const { data: driverRow } = await svc.from('drivers')
       .select('id, seated_vehicle_id, driver_id')
       .eq('personal_phone_norm', senderPhone)
       .limit(1).maybeSingle()
     if (driverRow) {
       driverId = driverRow.id
+
+      // Try driver_vehicle_assignments first (many-to-many, primary source)
+      if (driverRow.driver_id) {
+        const { data: assign } = await svc.from('driver_vehicle_assignments')
+          .select('vehicle_number, fleet_id')
+          .eq('driver_id', driverRow.driver_id)
+          .order('is_primary', { ascending: false })
+          .limit(1).maybeSingle()
+        if (assign) {
+          if (!vehicleNum) vehicleNum = String(assign.vehicle_number)
+          // Look up the vehicle row for vehicleId and vehicleNameKey
+          const { data: v } = await svc.from('vehicles')
+            .select('id, vehicle_name_key')
+            .eq('vehicle_number', assign.vehicle_number)
+            .eq('fleet_id', assign.fleet_id)
+            .limit(1).maybeSingle()
+          if (v) { vehicleId = v.id; vehicleNameKey = v.vehicle_name_key }
+        }
+      }
+
+      // Legacy fallback: seated_vehicle_id
       if (!vehicleId && driverRow.seated_vehicle_id) {
         vehicleId = driverRow.seated_vehicle_id
+      }
+    }
+
+    // Fallback: match vehicle directly by tablet phone number
+    if (!vehicleId) {
+      const { data: vehicleByPhone } = await svc.from('vehicles')
+        .select('id, vehicle_number, fleet_id, vehicle_name_key')
+        .or(`driver_phone_norm.eq.${senderPhone},pim_phone_norm.eq.${senderPhone}`)
+        .in('fleet_id', ASC_FLEET_IDS)
+        .limit(1).maybeSingle()
+      if (vehicleByPhone) {
+        vehicleId = vehicleByPhone.id
+        vehicleNameKey = vehicleByPhone.vehicle_name_key
+        if (!vehicleNum) vehicleNum = String(vehicleByPhone.vehicle_number)
       }
     }
   }
@@ -660,30 +685,57 @@ async function fetchVehicleContext(svc: Svc, senderPhone: string): Promise<Vehic
   const empty: VehicleContext = { vehicle_number: null, fleet_id: null, driver_name: null, language_hint: null }
   if (!senderPhone) return empty
 
-  // Try driver roster first — it has the proper name.
-  const { data: driver } = await svc.from('drivers')
-    .select('first_name, last_name, seated_vehicle_id')
-    .eq('personal_phone_norm', senderPhone)
-    .limit(1).maybeSingle()
-
   let vehicleNumber: number | null = null
   let fleetId: string | null = null
   let driverName: string | null = null
 
+  // 1. Try driver roster — it has the proper name.
+  const { data: driver } = await svc.from('drivers')
+    .select('name, driver_id, seated_vehicle_id')
+    .eq('personal_phone_norm', senderPhone)
+    .limit(1).maybeSingle()
+
   if (driver) {
-    const fn = (driver as { first_name?: string | null }).first_name ?? ''
-    const ln = (driver as { last_name?: string | null }).last_name ?? ''
-    driverName = `${fn} ${ln}`.trim() || null
-    const seatedId = (driver as { seated_vehicle_id?: string | null }).seated_vehicle_id
-    if (seatedId) {
-      const { data: v } = await svc.from('vehicles')
+    driverName = (driver as { name?: string | null }).name ?? null
+
+    // 2. Try driver_vehicle_assignments (many-to-many) — primary source of truth
+    const driverId = (driver as { driver_id?: number | null }).driver_id
+    if (driverId) {
+      const { data: assignment } = await svc.from('driver_vehicle_assignments')
         .select('vehicle_number, fleet_id')
-        .eq('id', seatedId).limit(1).maybeSingle()
-      if (v) { vehicleNumber = v.vehicle_number; fleetId = v.fleet_id }
+        .eq('driver_id', driverId)
+        .eq('is_primary', true)
+        .limit(1).maybeSingle()
+      if (assignment) {
+        vehicleNumber = assignment.vehicle_number
+        fleetId = assignment.fleet_id
+      }
+      // If no primary assignment, try any assignment
+      if (!vehicleNumber) {
+        const { data: anyAssign } = await svc.from('driver_vehicle_assignments')
+          .select('vehicle_number, fleet_id')
+          .eq('driver_id', driverId)
+          .limit(1).maybeSingle()
+        if (anyAssign) {
+          vehicleNumber = anyAssign.vehicle_number
+          fleetId = anyAssign.fleet_id
+        }
+      }
+    }
+
+    // 3. Legacy fallback: seated_vehicle_id on the driver record
+    if (!vehicleNumber) {
+      const seatedId = (driver as { seated_vehicle_id?: string | null }).seated_vehicle_id
+      if (seatedId) {
+        const { data: v } = await svc.from('vehicles')
+          .select('vehicle_number, fleet_id')
+          .eq('id', seatedId).limit(1).maybeSingle()
+        if (v) { vehicleNumber = v.vehicle_number; fleetId = v.fleet_id }
+      }
     }
   }
 
-  // Fallback: match vehicle directly by phone.
+  // 4. Fallback: match vehicle directly by phone (tablet phone numbers).
   if (!vehicleNumber) {
     const { data: v } = await svc.from('vehicles')
       .select('vehicle_number, fleet_id')

@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
   // Reduce build output noise, enable SWC minification (default in Next 15)
   poweredByHeader: false,
 
+  // Native addons and ESM-only packages that must not be bundled by webpack.
+  // @napi-rs/canvas: native .node binary for PDF page rendering
+  // pdfjs-dist: ESM-only PDF parser (imported via .mjs path)
+  serverExternalPackages: ['@napi-rs/canvas', 'pdfjs-dist'],
+
   // Experimental: partial pre-rendering where possible
   experimental: {
     optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr'],

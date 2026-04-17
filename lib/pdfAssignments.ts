@@ -3,17 +3,16 @@
  * Extracts driver-vehicle assignment data from scanned NTS-67 report PDFs.
  *
  * Strategy:
- * 1. Render PDF pages to high-res PNG using pdftoppm (poppler) or Ghostscript
+ * 1. Render PDF pages to PNG using pdfjs-dist + @napi-rs/canvas (pure Node.js)
  * 2. Send images to Claude Vision (Haiku) for structured data extraction
  * 3. Parse JSON responses into assignment records
  *
  * Handles rotated scans — Claude Vision reads images in any orientation.
  * Uses Haiku for cost efficiency (~$0.03 for a 24-page report).
+ * Works on Vercel serverless (no system dependencies required).
  */
 
-import { execSync } from 'child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync, rmdirSync } from 'fs'
-import { join } from 'path'
+import { createCanvas } from '@napi-rs/canvas'
 
 interface AssignmentRow {
   driver_id: number
@@ -28,52 +27,44 @@ interface ParseProgress {
 }
 
 /**
- * Render PDF pages to PNG images using pdftoppm (preferred) or Ghostscript.
- * Returns an array of PNG buffers, one per page.
+ * Render PDF pages to PNG buffers using pdfjs-dist + @napi-rs/canvas.
+ * Pure Node.js — no system tools (pdftoppm, ghostscript) required.
+ * Renders at scale 2.0 (~200 DPI) for good OCR quality.
  */
-function renderPdfPages(pdfBuffer: ArrayBuffer): Buffer[] {
-  const tmpDir = join('/tmp', `pdf_import_${Date.now()}`)
-  mkdirSync(tmpDir, { recursive: true })
-  const pdfPath = join(tmpDir, 'input.pdf')
-  writeFileSync(pdfPath, Buffer.from(pdfBuffer))
+async function renderPdfPages(pdfBuffer: ArrayBuffer): Promise<Buffer[]> {
+  // pdfjs-dist is ESM-only; dynamic import of .mjs build for Node.js compat.
+  // The .mjs path has no TS declarations — suppress TS2307.
+  // @ts-expect-error — pdfjs-dist/legacy/build/pdf.mjs has no type declarations
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
 
-  try {
-    // Try pdftoppm first (poppler-utils) — best quality
-    try {
-      execSync(`which pdftoppm`, { stdio: 'ignore' })
-      execSync(
-        `pdftoppm -r 200 -png ${JSON.stringify(pdfPath)} ${join(tmpDir, 'page')}`,
-        { timeout: 60000, stdio: 'ignore' },
-      )
-    } catch {
-      // Fallback to Ghostscript
-      try {
-        execSync(`which gs`, { stdio: 'ignore' })
-        execSync(
-          `gs -dNOPAUSE -dBATCH -sDEVICE=png16m -r200 -sOutputFile=${join(tmpDir, 'page-%02d.png')} ${JSON.stringify(pdfPath)}`,
-          { timeout: 60000, stdio: 'ignore' },
-        )
-      } catch {
-        throw new Error(
-          'PDF rendering requires pdftoppm (poppler-utils) or Ghostscript. ' +
-          'Neither is available on this server. Please convert the PDF to CSV or XLSX and re-upload.',
-        )
-      }
-    }
+  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise
+  const pages: Buffer[] = []
 
-    // Read all rendered page images
-    const pageFiles = readdirSync(tmpDir)
-      .filter(f => f.startsWith('page') && f.endsWith('.png'))
-      .sort()
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i)
+    const scale = 2.0 // ~200 DPI for letter-size pages
+    const viewport = page.getViewport({ scale })
 
-    return pageFiles.map(f => readFileSync(join(tmpDir, f)))
-  } finally {
-    // Cleanup temp files
-    try {
-      readdirSync(tmpDir).forEach(f => unlinkSync(join(tmpDir, f)))
-      rmdirSync(tmpDir)
-    } catch { /* best-effort cleanup */ }
+    const canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height))
+    const ctx = canvas.getContext('2d')
+
+    // pdfjs-dist render expects a canvas-like context
+    // @napi-rs/canvas is compatible with the CanvasRenderingContext2D interface
+    await page.render({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      canvasContext: ctx as any,
+      viewport,
+    }).promise
+
+    const pngBuffer = canvas.toBuffer('image/png')
+    pages.push(pngBuffer)
+
+    page.cleanup()
   }
+
+  await doc.destroy()
+  return pages
 }
 
 const EXTRACTION_PROMPT = `Extract all data rows from this driver assignment table. The page may be rotated — read it in the correct orientation.
@@ -181,7 +172,7 @@ export async function parseAssignmentPdf(
 ): Promise<{ records: Record<string, unknown>[]; totalPages: number }> {
   onProgress?.({ stage: 'rendering', message: 'Rendering PDF pages…', pct: 5 })
 
-  const pages = renderPdfPages(pdfBuffer)
+  const pages = await renderPdfPages(pdfBuffer)
   if (pages.length === 0) {
     throw new Error('No pages found in PDF. The file may be empty or corrupted.')
   }
