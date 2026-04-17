@@ -118,6 +118,30 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
   const driverAppVersions = Array.from(new Set((driverVerData ?? []).map(r => r.driver_app_version).filter(Boolean))).sort() as string[]
   const pimAppVersions    = Array.from(new Set((pimVerData ?? []).map(r => r.pim_app_version).filter(Boolean))).sort() as string[]
 
+  // Fetch driver assignments for vehicles on this page
+  const vehicleKeys = (data ?? []).map(v => ({ vn: v.vehicle_number, fi: (v.fleet_id ?? '').toUpperCase() }))
+  const driverAssignments: Record<string, { driverId: number; name: string; shift: string | null }[]> = {}
+  if (vehicleKeys.length > 0) {
+    const vnums = vehicleKeys.map(k => k.vn)
+    const { data: assigns } = await supabase
+      .from('driver_vehicle_assignments')
+      .select('vehicle_number, fleet_id, driver_id, shift, is_primary, drivers!inner(name)')
+      .in('vehicle_number', vnums)
+      .order('is_primary', { ascending: false })
+    if (assigns) {
+      for (const a of assigns) {
+        const key = `${a.vehicle_number}|${(a.fleet_id ?? '').toUpperCase()}`
+        const driverRow = a.drivers as unknown as { name: string } | null
+        if (!driverAssignments[key]) driverAssignments[key] = []
+        driverAssignments[key].push({
+          driverId: a.driver_id,
+          name: driverRow?.name ?? `Driver ${a.driver_id}`,
+          shift: a.shift,
+        })
+      }
+    }
+  }
+
   if (error) return (
     <div className="page-content">
       <div className="alert alert-error">Failed to load vehicles: {error.message}</div>
@@ -141,6 +165,7 @@ export default async function VehiclesPage({ searchParams }: { searchParams: Pro
         fStatus={fStatus} fFleet={fFleet} fMeter={fMeter} fTab={fTab}
         fDriverApp={fDriverApp} fPimApp={fPimApp}
         driverAppVersions={driverAppVersions} pimAppVersions={pimAppVersions}
+        driverAssignments={driverAssignments}
       />
     </div>
   )

@@ -7,6 +7,12 @@ import { exportToCsv } from '@/lib/exportCsv'
 import { fleetColor } from '@/lib/filters'
 import type { FleetOverview } from '@/types'
 
+interface DriverAssignment {
+  driverId: number
+  name: string
+  shift: string | null
+}
+
 interface Props {
   vehicles: FleetOverview[]; page: number; perPage: number
   totalPages: number; totalCount: number
@@ -14,6 +20,7 @@ interface Props {
   fStatus: string; fFleet: string; fMeter: string; fTab: string
   fDriverApp: string; fPimApp: string
   driverAppVersions: string[]; pimAppVersions: string[]
+  driverAssignments: Record<string, DriverAssignment[]>
 }
 
 const ALL_COLS = [
@@ -27,6 +34,7 @@ const ALL_COLS = [
   { key: 'meter_status',               label: 'Meter',        defaultVisible: true  },
   { key: 'rfid',                       label: 'RFID',         defaultVisible: true  },
   { key: 'sheet_tab',                  label: 'Tab',          defaultVisible: true  },
+  { key: 'assigned_drivers',            label: 'Drivers',      defaultVisible: true  },
   { key: 'device_name',                label: 'Device',       defaultVisible: false },
   { key: 'monthly_usage_gb',           label: 'Usage GB',     defaultVisible: false },
 ]
@@ -57,7 +65,7 @@ const COL_TO_PARAM: Record<string, string> = {
 
 const PER_PAGE_OPTIONS = [25, 50, 100]
 
-export default function VehiclesTable({ vehicles, page, perPage, totalPages, totalCount, search, sort, dir, fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp, driverAppVersions, pimAppVersions }: Props) {
+export default function VehiclesTable({ vehicles, page, perPage, totalPages, totalCount, search, sort, dir, fStatus, fFleet, fMeter, fTab, fDriverApp, fPimApp, driverAppVersions, pimAppVersions, driverAssignments }: Props) {
   const [, startTransition] = useTransition()
   const router     = useRouter()
   const pathname   = usePathname()
@@ -139,6 +147,21 @@ export default function VehiclesTable({ vehicles, page, perPage, totalPages, tot
         const label = s === 'Active Vehicles' ? 'Active' : s === 'Test Vehicles' ? 'Test' : s === 'Surrenders' ? 'Surrendered' : s
         const cls   = s === 'Active Vehicles' ? 'badge-green' : s === 'Test Vehicles' ? 'badge-amber' : s === 'Surrenders' ? 'badge-red' : 'badge-gray'
         return <span className={`badge ${cls}`}>{label}</span>
+      }
+      case 'assigned_drivers': {
+        const dkey = `${v.vehicle_number}|${(v.fleet_id ?? '').toUpperCase()}`
+        const drivers = driverAssignments[dkey]
+        if (!drivers || drivers.length === 0) return <span className="text-dim">—</span>
+        return (
+          <span style={{ fontSize: 12 }}>
+            {drivers.map((d, i) => (
+              <span key={d.driverId}>
+                {i > 0 && ', '}
+                {d.name}{d.shift ? <span style={{ color: 'var(--text3)', fontSize: 10 }}> ({d.shift})</span> : null}
+              </span>
+            ))}
+          </span>
+        )
       }
       default: {
         const val = (v as unknown as Record<string, unknown>)[key]
