@@ -101,18 +101,14 @@ export default async function DevicesPage({ searchParams }: { searchParams: Prom
     query = query.or(`device_name.ilike.${like},m360_user.ilike.${like},tablet_model.ilike.${like},imei.ilike.${like}`)
   }
 
-  // Count unassociated devices for the badge — use the view for an accurate count
-  const { count: unassocCount } = await supabase
-    .from('unassociated_devices')
-    .select('*', { count: 'exact', head: true })
-  const unassociatedCount = unassocCount ?? 0
-
-  // Fetch main query + distinct filter values in parallel (faster than 3000-row scan)
-  const [{ data, count }, { data: osData }, { data: policyData }] = await Promise.all([
+  // Fetch main query, unassociated count, and distinct filter values all in parallel
+  const [{ data, count }, { count: unassocCount }, { data: osData }, { data: policyData }] = await Promise.all([
     query,
+    supabase.from('unassociated_devices').select('*', { count: 'exact', head: true }),
     supabase.from('devices').select('android_os').not('android_os', 'is', null).limit(100),
     supabase.from('devices').select('m360_policy').not('m360_policy', 'is', null).limit(100),
   ])
+  const unassociatedCount = unassocCount ?? 0
   const osValues     = Array.from(new Set((osData ?? []).map(d => d.android_os).filter(Boolean))).sort() as string[]
   const policyValues = Array.from(new Set((policyData ?? []).map(d => d.m360_policy).filter(Boolean))).sort() as string[]
 

@@ -194,7 +194,7 @@ export default function SmsPage() {
     loadMessages()
     loadRules()
     const supabase = createClient()
-    supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', [...ASC_FLEETS]).order('vehicle_number').then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
+    supabase.from('vehicles').select('id,vehicle_number,fleet_id').eq('sheet_tab', 'Active Vehicles').in('fleet_id', [...ASC_FLEETS]).order('vehicle_number').limit(3000).then(({ data }) => setVehicles((data ?? []) as { id: string; vehicle_number: number; fleet_id: string }[]))
 
     // Supabase Realtime: apply INSERT / UPDATE events surgically instead of
     // triggering a full 500-row reload. A full reload happens to work but:
@@ -315,8 +315,7 @@ export default function SmsPage() {
     setRefreshing(true)
     setPollMsg(null)
     try {
-      await loadMessages()
-      await loadRules()
+      await Promise.all([loadMessages(), loadRules()])
     } finally {
       setRefreshing(false)
     }

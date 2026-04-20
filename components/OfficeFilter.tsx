@@ -151,7 +151,7 @@ export default function OfficeFilter({ allowedOffices }: { allowedOffices: Offic
   const divider = <div style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px', flexShrink: 0 }} />
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
       {/* Office label */}
       <span style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>Office</span>
 

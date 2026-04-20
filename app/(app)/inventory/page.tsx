@@ -27,28 +27,46 @@ export default async function InventoryPage() {
 
   const svc = await createServiceClient()
 
-  // Fetch inventory items with new/used split + vendor columns
-  const { data, error } = await svc.from('inventory_items')
-    .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
-    .order('sort_order', { ascending: true })
-    .order('name', { ascending: true })
-
-  const items: InventoryItem[] = (data ?? []) as InventoryItem[]
-
-  // Fetch action cards + their line items
+  // Fetch inventory items, action cards, and line items all in parallel
   let cards: ActionCard[] = []
+  let itemsResult: { data: unknown[] | null; error?: { message: string } | null }
+  let cardsResult: { data: unknown[] | null } = { data: null }
+  let lineResult: { data: unknown[] | null } = { data: null }
   try {
-    const [{ data: cardsData }, { data: lineData }] = await Promise.all([
-      svc.from('inventory_action_cards').select('*').order('sort_order').order('name'),
-      svc.from('inventory_action_card_items').select('id, card_id, inventory_item_id, quantity'),
+    const [ir, cr, lr] = await Promise.all([
+      svc.from('inventory_items')
+        .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true })
+        .limit(500),
+      svc.from('inventory_action_cards').select('*').order('sort_order').order('name').limit(200),
+      svc.from('inventory_action_card_items').select('id, card_id, inventory_item_id, quantity').limit(2000),
     ])
-    const byCard = new Map<string, (typeof lineData extends (infer T)[] | null ? T : never)[]>()
+    itemsResult = ir
+    cardsResult = cr
+    lineResult = lr
+  } catch {
+    // Migration 036 may not have been run yet — gracefully degrade
+    itemsResult = await svc.from('inventory_items')
+      .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .limit(500)
+  }
+
+  const items: InventoryItem[] = (itemsResult.data ?? []) as InventoryItem[]
+
+  // Build action cards from parallel results
+  try {
+    const cardsData = cardsResult.data
+    const lineData = lineResult.data as { id: string; card_id: string; inventory_item_id: string; quantity: number }[] | null
+    const byCard = new Map<string, { id: string; card_id: string; inventory_item_id: string; quantity: number }[]>()
     for (const li of (lineData ?? [])) {
       const arr = byCard.get(li.card_id) ?? []
       arr.push(li)
       byCard.set(li.card_id, arr)
     }
-    cards = (cardsData ?? []).map(c => ({ ...c, items: byCard.get(c.id) ?? [] })) as ActionCard[]
+    cards = (cardsData ?? []).map((c: Record<string, unknown>) => ({ ...c, items: byCard.get(c.id as string) ?? [] })) as ActionCard[]
   } catch {
     // Migration 036 may not have been run yet — gracefully degrade
   }
@@ -62,9 +80,9 @@ export default async function InventoryPage() {
         </div>
       </div>
 
-      {error && (
+      {itemsResult.error && (
         <div className="alert alert-error" style={{ marginBottom: 16 }}>
-          {error.message}
+          {itemsResult.error.message}
         </div>
       )}
 

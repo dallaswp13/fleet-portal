@@ -38,15 +38,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Sidebar userEmail={user.email ?? ''} isAdmin={isAdmin} />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="topbar">
-          <Suspense>
-            <OfficeFilter allowedOffices={allowedOffices} />
-          </Suspense>
-          <div style={{ flex: 1 }} />
-          <BalanceIndicator />
-          <TwilioStatusIndicator />
-          <M360StatusIndicator />
-          <ClaudeSupportToggle />
-          <ThemeToggle />
+          <div className="topbar-filters">
+            <Suspense>
+              <OfficeFilter allowedOffices={allowedOffices} />
+            </Suspense>
+          </div>
+          <div className="topbar-actions">
+            <BalanceIndicator />
+            <TwilioStatusIndicator />
+            <M360StatusIndicator />
+            <ClaudeSupportToggle />
+            <ThemeToggle />
+          </div>
         </div>
         <main className="main">
           {children}

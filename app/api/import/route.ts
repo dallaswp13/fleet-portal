@@ -554,14 +554,41 @@ export async function POST(req: NextRequest) {
             controller.close(); return
           }
           const fleetId = (assignRecs[0] as { fleet_id?: string }).fleet_id ?? '?'
-          send({ type: 'progress', stage: 'upserting', message: `Saving ${assignRecs.length} assignments for fleet ${fleetId}…`, pct: 20 })
 
-          await upsertAll('driver_vehicle_assignments', 'driver_id,vehicle_number,fleet_id', assignRecs, 200, (done, total) => {
+          // Pre-filter: only keep assignments where BOTH the vehicle and driver
+          // exist in their respective tables. The CSV often references vehicles or
+          // drivers not yet imported, which would violate FK constraints.
+          send({ type: 'progress', stage: 'validating', message: 'Validating against existing vehicles & drivers…', pct: 10 })
+          const [{ data: existingVehs }, { data: existingDrvs }] = await Promise.all([
+            supabaseService.from('vehicles').select('vehicle_number, fleet_id').eq('fleet_id', fleetId),
+            supabaseService.from('drivers').select('driver_id'),
+          ])
+          const vehSet = new Set(
+            (existingVehs ?? []).map(v => `${v.vehicle_number}|${v.fleet_id}`)
+          )
+          const drvSet = new Set(
+            (existingDrvs ?? []).map(d => d.driver_id)
+          )
+          const validRecs = assignRecs.filter(r => {
+            const vehKey = `${r.vehicle_number}|${r.fleet_id}`
+            return vehSet.has(vehKey) && drvSet.has(r.driver_id as number)
+          })
+          const skipped = assignRecs.length - validRecs.length
+
+          if (validRecs.length === 0) {
+            send({ type: 'error', error: `All ${assignRecs.length} assignments reference vehicles not in the database. Upload CCSI.xlsx first to populate the vehicles table, then re-upload this file.` })
+            controller.close(); return
+          }
+
+          send({ type: 'progress', stage: 'upserting', message: `Saving ${validRecs.length} assignments for fleet ${fleetId}${skipped ? ` (${skipped} skipped — vehicle not in DB)` : ''}…`, pct: 20 })
+
+          await upsertAll('driver_vehicle_assignments', 'driver_id,vehicle_number,fleet_id', validRecs, 200, (done, total) => {
             const pct = 20 + Math.round((done / total) * 75)
             send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
           })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_drivers_list', targetType: 'assignment', targetId: fileName, payload: { filename: fileName, fleet: fleetId, size: fileBuffer.byteLength }, result: { total: assignRecs.length }, success: true })
-          send({ type: 'done', total: assignRecs.length, message: `Imported ${assignRecs.length} driver-vehicle assignments (fleet ${fleetId})` })
+          await writeAuditLog({ userEmail: user.email!, action: 'import_drivers_list', targetType: 'assignment', targetId: fileName, payload: { filename: fileName, fleet: fleetId, size: fileBuffer.byteLength, skipped }, result: { total: validRecs.length }, success: true })
+          const skipMsg = skipped ? ` · ${skipped} skipped (vehicle not in DB)` : ''
+          send({ type: 'done', total: validRecs.length, message: `Imported ${validRecs.length} driver-vehicle assignments (fleet ${fleetId})${skipMsg}` })
           controller.close(); return
         } else if (type === 'ccsi') {
           const result = await parseCCSI(buffer)

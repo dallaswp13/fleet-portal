@@ -74,20 +74,33 @@ export default async function LinesPage({ searchParams }: { searchParams: Promis
     if (['E','L','S','Y','U'].some(f => s.has(f))) officeList.push('ASC')
   }
 
-  // ── Fetch vehicles in batches (Supabase 1000-row cap) ───────────────────────
-  const allVehicles: { vehicle_number: number; fleet_id: string; driver_phone_norm: string | null; pim_phone_norm: string | null }[] = []
-  let from = 0
-  while (true) {
+  // ── Fetch vehicles in parallel batches (Supabase 1000-row cap) ──────────────
+  // Fire up to 5 parallel range queries to avoid the serial waterfall that
+  // added multi-second latency on fleets with thousands of vehicles.
+  const MAX_PARALLEL_BATCHES = 5
+  const BATCH = 1000
+  type VehicleRow = { vehicle_number: number; fleet_id: string; driver_phone_norm: string | null; pim_phone_norm: string | null }
+
+  function vehicleBatchQuery(rangeStart: number) {
     let vq = supabase
       .from('vehicles')
       .select('vehicle_number,fleet_id,driver_phone_norm,pim_phone_norm')
-      .range(from, from + 999)
+      .range(rangeStart, rangeStart + BATCH - 1)
     if (fleetIds !== null && fleetIds.length > 0) vq = vq.in('fleet_id', fleetIds)
-    const { data, error } = await vq
-    if (error || !data || data.length === 0) break
-    allVehicles.push(...data)
-    if (data.length < 1000) break
-    from += 1000
+    return vq
+  }
+
+  // First batch to get an idea of total size
+  const first = await vehicleBatchQuery(0)
+  let allVehicles: VehicleRow[] = first.data ?? []
+
+  if (allVehicles.length === BATCH) {
+    // Likely more rows — fire parallel batches for the rest
+    const offsets = Array.from({ length: MAX_PARALLEL_BATCHES }, (_, i) => (i + 1) * BATCH)
+    const results = await Promise.all(offsets.map(o => vehicleBatchQuery(o)))
+    for (const r of results) {
+      if (r.data && r.data.length > 0) allVehicles.push(...r.data)
+    }
   }
 
   // Build phone maps

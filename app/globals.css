@@ -125,7 +125,10 @@ tbody tr:hover td { background: var(--bg3); color: var(--text); }
 .app-shell { display: flex; height: 100vh; overflow: hidden; }
 .sidebar { width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; overflow-y: auto; }
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.topbar { height: var(--topbar-h); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 16px; flex-shrink: 0; background: var(--bg2); }
+.topbar { height: var(--topbar-h); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 10px; flex-shrink: 0; background: var(--bg2); overflow: hidden; }
+.topbar-filters { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; -ms-overflow-style: none; }
+.topbar-filters::-webkit-scrollbar { display: none; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .page-content { flex: 1; overflow-y: auto; padding: 24px; }
 
 /* Sidebar nav */
@@ -368,9 +371,10 @@ select.toolbar-select {
 
 /* ── Mobile Responsive ───────────────────────────────────────────────────── */
 
-/* Medium screens (tablets, small laptops) — topbar wraps */
+/* Medium screens (tablets, small laptops) */
 @media (max-width: 1024px) {
-  .topbar { padding: 0 12px; gap: 8px; flex-wrap: wrap; min-height: var(--topbar-h); height: auto; }
+  .topbar { padding: 0 10px; gap: 6px; }
+  .topbar-actions { gap: 4px; }
   .grid-stats { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
 }
 

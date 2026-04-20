@@ -32,24 +32,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     return q
   }
 
-  // Resolve the vehicle_name_keys in scope for fleet filters so we can
-  // count devices by name_key (one vehicle has 2 devices: driver + PIM, each as
-  // a distinct row in `devices`). Counting through `fleet_overview` instead
-  // undercounts by 2x because that view is one row per vehicle.
-  //
-  // We deliberately do NOT apply the sheet_tab filter here: a device is
-  // managed in MaaS360 regardless of whether its vehicle is Active, Test, or
-  // Surrendered, and counting the "Devices" stat against active-only vehicles
-  // makes the number lag ~40-45% below the actual devices table (e.g. showing
-  // 1734 when M360 has 3071 rows). The tab filter still applies to vehicle
-  // stat rows above.
-  let deviceNameKeys: string[] | null = null
-  if (fleetIds !== null) {
-    let vq = supabase.from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
-    if (fleetIds.length === 0) vq = vq.eq('vehicle_number', -1)
-    else vq = vq.in('fleet_id', fleetIds)
-    const { data: vehs } = await vq
-    deviceNameKeys = (vehs ?? []).map(v => v.vehicle_name_key as string)
+  // Resolve vehicle_name_keys + device count in a single chained async so
+  // they run in parallel with the other dashboard queries (previously the
+  // name_key fetch ran serially before Promise.all, adding ~200-400ms).
+  async function fetchDeviceCount(): Promise<{ count: number | null }> {
+    let nameKeys: string[] | null = null
+    if (fleetIds !== null) {
+      let vq = supabase.from('vehicles').select('vehicle_name_key').not('vehicle_name_key', 'is', null)
+      if (fleetIds.length === 0) vq = vq.eq('vehicle_number', -1)
+      else vq = vq.in('fleet_id', fleetIds)
+      const { data: vehs } = await vq
+      nameKeys = (vehs ?? []).map(v => v.vehicle_name_key as string)
+    }
+    const q = supabase.from('devices').select('*', { count: 'exact', head: true })
+    if (nameKeys !== null) {
+      if (nameKeys.length === 0) return q.eq('name_key', '___NO_MATCH___')
+      return q.in('name_key', nameKeys)
+    }
+    return q
   }
 
   const [
@@ -73,17 +73,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     vehicleQuery().ilike('online_status', 'Online%'),
     vehicleQuery().ilike('online_status', 'Offline%'),
     vehicleQuery().not('online_status', 'ilike', 'Online%').not('online_status', 'ilike', 'Offline%'),
-    // Devices: count rows directly from `devices` so both driver and PIM
-    // tablets are included. When an office/tab filter is active, restrict
-    // by the in-scope vehicle_name_keys; otherwise count every device.
-    (() => {
-      const q = supabase.from('devices').select('*', { count: 'exact', head: true })
-      if (deviceNameKeys !== null) {
-        if (deviceNameKeys.length === 0) return q.eq('name_key', '___NO_MATCH___')
-        return q.in('name_key', deviceNameKeys)
-      }
-      return q
-    })(),
+    // Devices: chained fetch — resolves name_keys then counts devices.
+    // Runs in parallel with all other queries above/below.
+    fetchDeviceCount(),
     // Verizon lines filtered by office
     (() => {
       let q = supabase.from('verizon_lines').select('*', { count: 'exact', head: true })
