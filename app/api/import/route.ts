@@ -289,57 +289,62 @@ function parseDriverReport(text: string): Record<string, unknown>[] {
   return Array.from(seen.values())
 }
 
-// ── Parse Driver-Vehicle Assignments ─────────────────────────────────────────
-// Flexible parser — will be refined once Dallas uploads the actual sheet.
-// Expected columns (case-insensitive): Driver ID, Vehicle #/Number, Fleet ID,
-// optionally Shift, Primary (Y/N).
-async function parseAssignments(text: string, isXlsx: boolean, buffer?: ArrayBuffer): Promise<Record<string, unknown>[]> {
-  let rows: Record<string, string>[]
-
-  if (isXlsx && buffer) {
-    const XLSX = await import('xlsx')
-    const wb = XLSX.read(buffer, { type: 'array' })
-    const ws = wb.Sheets[wb.SheetNames[0]]
-    if (!ws) throw new Error('No sheets found in assignments workbook')
-    rows = XLSX.utils.sheet_to_json(ws, { defval: '' }) as Record<string, string>[]
-  } else {
-    rows = parseCSV(text)
+// ── Parse Drivers_List CSV (driver-vehicle assignments) ─────────────────────
+// Source: NTS Drivers_List_E.csv, Drivers_List_L.csv, _S, _U, _Y
+// Format quirk: every row has 26 fields — columns 0-12 are header names
+// repeated on every row, columns 13-25 are the actual data values.
+//
+// Column mapping (by position, 0-indexed):
+//   [0]  "Fleet"         → [13] fleet_id (E, L, S, U, Y)
+//   [1]  "dr_id"         → [14] driver_id (lease number)
+//   [2]  "dr_cur_veh_nbr"→ [15] current vehicle number (0 = no assignment)
+//   [3]  "dr_ow_id"      → [16] owner id (not used)
+//   [4]  "dr_last_name"  → [17] last name
+//   [5]  "dr_first_name" → [18] first name
+//   [12] "Active"        → [25] active flag (Y/N)
+//
+// We only need fleet_id, driver_id, and vehicle_number. Rows with vehicle 0
+// are skipped (no assignment).
+function parseDriversList(text: string): Record<string, unknown>[] {
+  // Parse CSV respecting quoted fields (dr_ow_id has commas like "1,710")
+  function parseCsvLine(line: string): string[] {
+    const result: string[] = []
+    let cur = '', inQuote = false
+    for (const ch of line) {
+      if (ch === '"') { inQuote = !inQuote }
+      else if (ch === ',' && !inQuote) { result.push(cur.trim()); cur = '' }
+      else { cur += ch }
+    }
+    result.push(cur.trim())
+    return result
   }
 
-  if (rows.length === 0) throw new Error('Assignments file has no data rows')
-
-  // Find columns by fuzzy header matching
-  const headers = Object.keys(rows[0])
-  const find = (patterns: string[]) => headers.find(h => patterns.some(p => h.toLowerCase().includes(p))) ?? null
-  const colDriver  = find(['driver id', 'driver_id', 'driverid', 'lease'])
-  const colVehicle = find(['vehicle #', 'vehicle_number', 'vehicle number', 'vehiclenumber', 'vehicle_num', 'vehiclenum', 'cab'])
-  const colFleet   = find(['fleet id', 'fleet_id', 'fleetid', 'fleet'])
-  const colShift   = find(['shift'])
-  const colPrimary = find(['primary'])
-
-  if (!colDriver || !colVehicle) {
-    throw new Error(`Assignments file missing required columns. Found: ${headers.join(', ')}. Need "Driver ID" and "Vehicle #" (or similar).`)
-  }
+  const lines = text.split(/\r?\n/).filter(l => l.trim())
+  if (lines.length === 0) throw new Error('Drivers_List file is empty')
 
   const seen = new Map<string, Record<string, unknown>>()
   const now = new Date().toISOString()
 
-  for (const row of rows) {
-    const driverId = parseInt(String(row[colDriver] ?? '').trim(), 10)
-    const vehicleNum = parseInt(String(row[colVehicle] ?? '').trim(), 10)
-    if (isNaN(driverId) || isNaN(vehicleNum)) continue
+  for (const line of lines) {
+    const cols = parseCsvLine(line)
+    if (cols.length < 26) continue
 
-    const fleet = colFleet ? (clean(row[colFleet]) ?? '') : ''
-    const shift = colShift ? clean(row[colShift]) : null
-    const isPrimary = colPrimary ? String(row[colPrimary]).trim().toUpperCase() === 'Y' : true
+    // Data values start at index 13
+    const fleet = (cols[13] ?? '').trim()
+    const driverId = parseInt(cols[14] ?? '', 10)
+    const vehicleNum = parseInt(cols[15] ?? '', 10)
+    const active = (cols[25] ?? '').trim().toUpperCase()
+
+    // Skip invalid rows, unassigned drivers (vehicle 0), and inactive drivers
+    if (isNaN(driverId) || isNaN(vehicleNum) || vehicleNum === 0) continue
+    if (active !== 'Y') continue
 
     const key = `${driverId}|${vehicleNum}|${fleet}`
     seen.set(key, {
       driver_id: driverId,
       vehicle_number: vehicleNum,
       fleet_id: fleet,
-      shift,
-      is_primary: isPrimary,
+      is_primary: true,
       updated_at: now,
     })
   }
@@ -436,13 +441,10 @@ function decodeTextFile(buffer: ArrayBuffer): string {
 }
 
 // ── Detect file type ─────────────────────────────────────────────────────────
-function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'driver_report' | 'devices' | 'verizon' | 'assignments' | 'assignments_pdf' | null {
+function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'driver_report' | 'devices' | 'verizon' | 'drivers_list' | null {
   const lower = filename.toLowerCase()
-  // PDF assignment file — NTS-67 driver assignment report scans
-  if (lower.endsWith('.pdf') && (lower.includes('assignment') || lower.includes('driver') || lower.includes('vehicle') || lower.includes('nts'))) return 'assignments_pdf'
-  if (lower.endsWith('.pdf')) return 'assignments_pdf' // any PDF in import is assumed to be assignments
-  // CSV/XLSX assignment file — check before generic driver/xlsx patterns
-  if (lower.includes('assignment') || lower.includes('driver_vehicle') || lower.includes('driver vehicle')) return 'assignments'
+  // Drivers_List_E/L/S/U/Y.csv — driver-vehicle assignment CSVs from NTS
+  if (/drivers_list_[elusy]/i.test(lower) && lower.endsWith('.csv')) return 'drivers_list'
   if (lower.includes('driver') && lower.endsWith('.xlsx')) return 'drivers'
   if (lower.endsWith('.xlsx')) return 'ccsi'
   // Tableau driver report — recognized by filename or by header signature
@@ -454,11 +456,8 @@ function detectType(filename: string, text: string): 'ccsi' | 'drivers' | 'drive
   if (firstLine.includes('drv license nbr') || (firstLine.includes('phone - port') && firstLine.includes('driver id'))) {
     return 'driver_report'
   }
-  // Assignment CSV — has driver id + vehicle columns but NOT license/phone columns
-  if (firstLine.includes('driver id') && (firstLine.includes('vehicle #') || firstLine.includes('vehicle number') || firstLine.includes('vehicle_number'))
-      && !firstLine.includes('drv license') && !firstLine.includes('phone - port')) {
-    return 'assignments'
-  }
+  // Drivers_List format detection by content — every row starts with "Fleet","dr_id","dr_cur_veh_nbr"
+  if (firstLine.includes('"fleet","dr_id","dr_cur_veh_nbr"')) return 'drivers_list'
   if (firstLine.includes('wireless number')) return 'verizon'
   if (firstLine.includes('device id') && firstLine.includes('imei')) return 'devices'
   return null
@@ -506,14 +505,13 @@ export async function POST(req: NextRequest) {
         send({ type: 'start', filename: fileName })
 
         const buffer = fileBuffer
-        const isPdf  = fileName.toLowerCase().endsWith('.pdf')
         const isXlsx = fileName.toLowerCase().endsWith('.xlsx')
         // decodeTextFile() handles UTF-16 BOM (Tableau quirk) + UTF-8 fallback
-        const text   = (isXlsx || isPdf) ? '' : decodeTextFile(buffer)
+        const text   = isXlsx ? '' : decodeTextFile(buffer)
         const type   = detectType(fileName, text)
 
         if (!type) {
-          send({ type: 'error', error: `Could not identify file type for "${fileName}". Expected CCSI.xlsx, Active Drivers.xlsx, Driver Report.csv, View_All_Devices.csv, account_unbilled_usage_report.csv, or Vehicle Assignments.pdf` })
+          send({ type: 'error', error: `Could not identify file type for "${fileName}". Expected CCSI.xlsx, CCSI-drivers.xlsx, Driver Report.csv, Drivers_List_[E/L/S/U/Y].csv, View_All_Devices.csv, or account_unbilled_usage_report.csv` })
           controller.close(); return
         }
 
@@ -546,48 +544,24 @@ export async function POST(req: NextRequest) {
           await writeAuditLog({ userEmail: user.email!, action: 'import_driver_report', targetType: 'device', targetId: fileName, payload: { filename: fileName, size: fileBuffer.byteLength }, result: { total: drvRecs.length }, success: true })
           send({ type: 'done', total: drvRecs.length, message: `Imported ${drvRecs.length} driver-report rows (license, phone, address)` })
           controller.close(); return
-        } else if (type === 'assignments_pdf') {
-          const anthropicKey = process.env.ANTHROPIC_API_KEY
-          if (!anthropicKey) {
-            send({ type: 'error', error: 'PDF import requires ANTHROPIC_API_KEY to be configured (uses Claude Vision for OCR).' })
-            controller.close(); return
-          }
-          const { parseAssignmentPdf } = await import('@/lib/pdfAssignments')
-          const { records: pdfRecs, totalPages } = await parseAssignmentPdf(buffer, anthropicKey, (p) => {
-            send({ type: 'progress', stage: p.stage, message: p.message, pct: p.pct })
-          })
-          if (pdfRecs.length === 0) {
-            send({ type: 'error', error: `Parsed 0 assignment rows from ${totalPages} pages. The PDF may not be a driver assignment report, or the pages may be unreadable.` })
-            controller.close(); return
-          }
-          // Clear existing assignments and replace
-          await supabaseService.from('driver_vehicle_assignments').delete().neq('id', '00000000-0000-0000-0000-000000000000')
-          send({ type: 'progress', stage: 'cleared', message: 'Cleared old assignments', pct: 92 })
-
-          await upsertAll('driver_vehicle_assignments', 'driver_id,vehicle_number,fleet_id', pdfRecs, 200, (done, total) => {
-            const pct = 92 + Math.round((done / total) * 6)
-            send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
-          })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_assignments_pdf', targetType: 'assignment', targetId: fileName, payload: { filename: fileName, pages: totalPages, size: fileBuffer.byteLength }, result: { total: pdfRecs.length }, success: true })
-          send({ type: 'done', total: pdfRecs.length, message: `Imported ${pdfRecs.length} driver-vehicle assignments from ${totalPages}-page PDF` })
-          controller.close(); return
-        } else if (type === 'assignments') {
-          const assignRecs = await parseAssignments(text, isXlsx, buffer)
+        } else if (type === 'drivers_list') {
+          // Drivers_List_E/L/S/U/Y.csv — per-fleet driver-vehicle assignments.
+          // Each file is additive (upsert, not full-replace) so Dallas can upload
+          // all 5 fleets one by one without each wiping the others.
+          const assignRecs = parseDriversList(text)
           if (assignRecs.length === 0) {
-            send({ type: 'error', error: 'Assignments file parsed 0 rows. Check that the file has "Driver ID" and "Vehicle #" columns.' })
+            send({ type: 'error', error: 'Drivers_List parsed 0 assignment rows. Check that the file has the expected NTS format with dr_id and dr_cur_veh_nbr columns.' })
             controller.close(); return
           }
-          // Clear existing assignments and replace with the new set
-          // This is a full-replacement import — the sheet is the source of truth
-          await supabaseService.from('driver_vehicle_assignments').delete().neq('id', '00000000-0000-0000-0000-000000000000')
-          send({ type: 'progress', stage: 'cleared', message: 'Cleared old assignments', pct: 20 })
+          const fleetId = (assignRecs[0] as { fleet_id?: string }).fleet_id ?? '?'
+          send({ type: 'progress', stage: 'upserting', message: `Saving ${assignRecs.length} assignments for fleet ${fleetId}…`, pct: 20 })
 
           await upsertAll('driver_vehicle_assignments', 'driver_id,vehicle_number,fleet_id', assignRecs, 200, (done, total) => {
-            const pct = 25 + Math.round((done / total) * 70)
+            const pct = 20 + Math.round((done / total) * 75)
             send({ type: 'progress', stage: 'upserting', message: `Saving ${done} / ${total}…`, pct, done, total })
           })
-          await writeAuditLog({ userEmail: user.email!, action: 'import_assignments', targetType: 'assignment', targetId: fileName, payload: { filename: fileName, size: fileBuffer.byteLength }, result: { total: assignRecs.length }, success: true })
-          send({ type: 'done', total: assignRecs.length, message: `Imported ${assignRecs.length} driver-vehicle assignments` })
+          await writeAuditLog({ userEmail: user.email!, action: 'import_drivers_list', targetType: 'assignment', targetId: fileName, payload: { filename: fileName, fleet: fleetId, size: fileBuffer.byteLength }, result: { total: assignRecs.length }, success: true })
+          send({ type: 'done', total: assignRecs.length, message: `Imported ${assignRecs.length} driver-vehicle assignments (fleet ${fleetId})` })
           controller.close(); return
         } else if (type === 'ccsi') {
           const result = await parseCCSI(buffer)

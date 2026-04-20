@@ -12,7 +12,7 @@ interface FileState {
   stage?:   string
 }
 
-const ACCEPTED = ['.xlsx', '.csv', '.pdf']
+const ACCEPTED = ['.xlsx', '.csv']
 
 export default function UpdateDBContent() {
   const [files,    setFiles]    = useState<FileState[]>([])
@@ -21,7 +21,7 @@ export default function UpdateDBContent() {
   function addFiles(incoming: FileList | File[]) {
     const arr   = Array.from(incoming)
     const valid = arr.filter(f => ACCEPTED.some(ext => f.name.toLowerCase().endsWith(ext)))
-    if (valid.length < arr.length) alert(`Only .xlsx and .csv files accepted. ${arr.length - valid.length} skipped.`)
+    if (valid.length < arr.length) alert(`Only .xlsx and .csv files are accepted. ${arr.length - valid.length} file(s) skipped.`)
     setFiles(prev => {
       const existing = new Set(prev.map(f => f.file.name))
       const newOnes  = valid.filter(f => !existing.has(f.name)).map(f => ({ file: f, status: 'pending' as const }))
@@ -115,8 +115,7 @@ export default function UpdateDBContent() {
 
   function fileTypeLabel(name: string): { label: string; color: string } {
     const lower = name.toLowerCase()
-    if (lower.endsWith('.pdf')) return { label: 'Assignments PDF', color: 'badge-blue' }
-    if (lower.includes('assignment') || lower.includes('driver_vehicle') || lower.includes('driver vehicle')) return { label: 'Assignments', color: 'badge-blue' }
+    if (/drivers_list_[elusy]/i.test(lower)) return { label: 'Assignments', color: 'badge-blue' }
     if (lower.includes('driver report') || lower.includes('driver_report')) return { label: 'Driver Report', color: 'badge-purple' }
     if (lower.endsWith('.xlsx') && lower.includes('driver')) return { label: 'Drivers', color: 'badge-gray' }
     if (lower.endsWith('.xlsx')) return { label: 'CCSI', color: 'badge-blue' }
@@ -139,7 +138,7 @@ export default function UpdateDBContent() {
           { icon: '📄', name: 'account_unbilled_usage_report.csv', desc: 'Verizon usage data',     color: 'var(--green)' },
           { icon: '📊', name: 'CCSI-drivers.xlsx',                    desc: 'Driver roster + photos', color: '#9b59b6' },
           { icon: '📄', name: 'Driver Report.csv',                  desc: 'Tableau export — license, phone, address', color: '#7c3aed' },
-          { icon: '📄', name: 'Vehicle Assignments.pdf',              desc: 'NTS-67 scanned driver assignments',        color: '#0891b2' },
+          { icon: '📄', name: 'Drivers_List_[E/L/S/U/Y].csv',       desc: 'NTS driver-vehicle assignments per fleet', color: '#0891b2' },
         ].map(f => (
           <div key={f.name} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: '14px 16px' }}>
             <div style={{ fontSize: 20, marginBottom: 6 }}>{f.icon}</div>
@@ -170,8 +169,8 @@ export default function UpdateDBContent() {
       >
         <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
         <div style={{ fontWeight: 500, color: 'var(--text)', marginBottom: 4 }}>Drop files here or click to browse</div>
-        <div style={{ fontSize: 12, color: 'var(--text3)' }}>Accepts .xlsx, .csv, and .pdf — file type detected automatically</div>
-        <input id="db-file-input" type="file" accept=".xlsx,.csv,.pdf" multiple style={{ display: 'none' }} onChange={onFileInput} />
+        <div style={{ fontSize: 12, color: 'var(--text3)' }}>Accepts .xlsx and .csv — file type detected automatically</div>
+        <input id="db-file-input" type="file" accept=".xlsx,.csv" multiple style={{ display: 'none' }} onChange={onFileInput} />
       </div>
 
       {/* File list */}
@@ -188,7 +187,7 @@ export default function UpdateDBContent() {
               }}>
                 {/* File header row */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span style={{ fontSize: 20 }}>{fs.file.name.endsWith('.xlsx') ? '📊' : fs.file.name.endsWith('.pdf') ? '📕' : '📄'}</span>
+                  <span style={{ fontSize: 20 }}>{fs.file.name.endsWith('.xlsx') ? '📊' : '📄'}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
                       <span style={{ fontWeight: 500, color: 'var(--text)', fontSize: 13 }}>{fs.file.name}</span>

@@ -13,11 +13,6 @@ const nextConfig: NextConfig = {
   // Reduce build output noise, enable SWC minification (default in Next 15)
   poweredByHeader: false,
 
-  // Native addons and ESM-only packages that must not be bundled by webpack.
-  // @napi-rs/canvas: native .node binary for PDF page rendering
-  // pdfjs-dist: ESM-only PDF parser (imported via .mjs path)
-  serverExternalPackages: ['@napi-rs/canvas', 'pdfjs-dist'],
-
   // Experimental: partial pre-rendering where possible
   experimental: {
     optimizePackageImports: ['@supabase/supabase-js', '@supabase/ssr'],
@@ -30,10 +25,6 @@ const nextConfig: NextConfig = {
   // won't detect the `readFileSync` at build time, so we include it explicitly.
   outputFileTracingIncludes: {
     '/api/sms/webhook': ['./lib/claude-playbook.md'],
-    // pdfjs-dist dynamically imports the worker file at runtime (even in Node.js
-    // "fake worker" mode). Vercel's output tracing doesn't detect the dynamic
-    // import, so we force-include it.
-    '/api/import': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
   },
 }
 
