@@ -13,6 +13,7 @@
  */
 
 import { createCanvas } from '@napi-rs/canvas'
+import { join } from 'path'
 
 interface AssignmentRow {
   driver_id: number
@@ -37,9 +38,12 @@ async function renderPdfPages(pdfBuffer: ArrayBuffer): Promise<Buffer[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
 
-  // Disable the web worker — Vercel serverless doesn't bundle pdf.worker.mjs
-  // and there's no benefit to a worker thread in a short-lived lambda anyway.
-  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+  // On Node.js, pdfjs-dist runs a "fake worker" (same thread) but still needs
+  // to dynamically import the worker source. Set workerSrc to the absolute path
+  // so the import resolves correctly on Vercel (the file is included via
+  // outputFileTracingIncludes in next.config.ts).
+  const workerPath = join(process.cwd(), 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs')
+  pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath
 
   const doc = await pdfjsLib.getDocument({
     data: new Uint8Array(pdfBuffer),

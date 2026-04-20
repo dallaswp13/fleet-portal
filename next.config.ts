@@ -30,6 +30,10 @@ const nextConfig: NextConfig = {
   // won't detect the `readFileSync` at build time, so we include it explicitly.
   outputFileTracingIncludes: {
     '/api/sms/webhook': ['./lib/claude-playbook.md'],
+    // pdfjs-dist dynamically imports the worker file at runtime (even in Node.js
+    // "fake worker" mode). Vercel's output tracing doesn't detect the dynamic
+    // import, so we force-include it.
+    '/api/import': ['./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
   },
 }
 
