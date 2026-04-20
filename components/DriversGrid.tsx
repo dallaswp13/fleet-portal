@@ -25,9 +25,11 @@ interface Props {
   search: string; activeTab: 'active' | 'inactive' | 'all'
   activeCount: number; inactiveCount: number; allCount: number
   hasPhone: boolean
+  seated: '' | 'seated' | 'unseated'
+  seatedCount: number
 }
 
-export default function DriversGrid({ drivers: rawDrivers, page, totalPages, totalCount, search, activeTab, activeCount, inactiveCount, allCount, hasPhone }: Props) {
+export default function DriversGrid({ drivers: rawDrivers, page, totalPages, totalCount, search, activeTab, activeCount, inactiveCount, allCount, hasPhone, seated, seatedCount }: Props) {
   const router    = useRouter()
   const pathname  = usePathname()
   const [, startTransition] = useTransition()
@@ -207,6 +209,21 @@ export default function DriversGrid({ drivers: rawDrivers, page, totalPages, tot
           onClick={() => nav({ tab: 'inactive', page: '0' })}>Inactive ({inactiveCount})</button>
         <button className={activeTab === 'all'      ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
           onClick={() => nav({ tab: 'all', page: '0' })}>All ({allCount})</button>
+        <div style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px' }} />
+        <button
+          className={seated === 'seated' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+          onClick={() => nav({ seated: seated === 'seated' ? '' : 'seated', page: '0' })}
+          title="Show only drivers assigned to a vehicle"
+        >
+          🪑 Seated ({seatedCount})
+        </button>
+        <button
+          className={seated === 'unseated' ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+          onClick={() => nav({ seated: seated === 'unseated' ? '' : 'unseated', page: '0' })}
+          title="Show only drivers NOT assigned to a vehicle"
+        >
+          Unseated
+        </button>
         <div style={{ width: 1, height: 22, background: 'var(--border)', margin: '0 6px' }} />
         <button
           className={hasPhone ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}

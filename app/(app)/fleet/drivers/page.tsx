@@ -9,7 +9,7 @@ const PER_PAGE = 60
 interface SearchParams {
   page?: string; q?: string; tab?: string
   offices?: string; asc_fleets?: string
-  has_phone?: string
+  has_phone?: string; seated?: string
 }
 
 export default async function DriversPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -18,6 +18,7 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const search   = params.q?.trim() ?? ''
   const tab      = (params.tab ?? 'active') as 'active' | 'inactive' | 'all'
   const hasPhone = params.has_phone === '1'
+  const seated   = (params.seated ?? '') as '' | 'seated' | 'unseated'
 
   const supabase = await createClient()
 
@@ -37,6 +38,15 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
   const ascFleets = getAscFleetsFromParam(params.asc_fleets)
   const fleetIds  = getFleetIdsFromFilters(offices, ascFleets)
 
+  // If seated filter is active, fetch assigned driver IDs from driver_vehicle_assignments
+  let seatedDriverIds: Set<number> | null = null
+  if (seated === 'seated' || seated === 'unseated') {
+    let aq = supabase.from('driver_vehicle_assignments').select('driver_id')
+    if (fleetIds !== null && fleetIds.length > 0) aq = aq.in('fleet_id', fleetIds)
+    const { data: assignData } = await aq.limit(5000)
+    seatedDriverIds = new Set((assignData ?? []).map(a => a.driver_id))
+  }
+
   // Build base query helper
   function buildQuery(activeFilter?: boolean) {
     let q = supabase.from('drivers').select('*', { count: 'exact' })
@@ -44,6 +54,14 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     if (fleetIds !== null && fleetIds.length > 0) q = q.in('fleet_id', fleetIds)
     else if (fleetIds !== null && fleetIds.length === 0) q = q.eq('fleet_id', '___NONE___')
     if (hasPhone) q = q.not('personal_phone_norm', 'is', null).neq('personal_phone_norm', '')
+    if (seatedDriverIds !== null && seated === 'seated') {
+      const ids = Array.from(seatedDriverIds)
+      if (ids.length > 0) q = q.in('driver_id', ids)
+      else q = q.eq('driver_id', -1)
+    } else if (seatedDriverIds !== null && seated === 'unseated') {
+      const ids = Array.from(seatedDriverIds)
+      if (ids.length > 0) q = q.not('driver_id', 'in', `(${ids.join(',')})`)
+    }
     if (search) {
       const like = `%${search}%`
       q = q.or(`name.ilike.${like},email.ilike.${like},driver_id::text.ilike.${like},personal_phone.ilike.${like},drivers_license.ilike.${like}`)
@@ -60,16 +78,25 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     return q
   }
 
+  // Count seated drivers for the badge
+  async function seatedCount(): Promise<number> {
+    let aq = supabase.from('driver_vehicle_assignments').select('driver_id', { count: 'exact', head: true })
+    if (fleetIds !== null && fleetIds.length > 0) aq = aq.in('fleet_id', fleetIds)
+    const { count } = await aq
+    return count ?? 0
+  }
+
   // Build main paginated query
   let query = buildQuery(tab === 'active' ? true : tab === 'inactive' ? false : undefined)
   query = query.order('name').range(page * PER_PAGE, (page + 1) * PER_PAGE - 1)
 
   // Run all queries in parallel
-  const [{ count: activeCount }, { count: inactiveCount }, { count: allCount }, { data: drivers, count: filteredCount }] = await Promise.all([
+  const [{ count: activeCount }, { count: inactiveCount }, { count: allCount }, { data: drivers, count: filteredCount }, seatedCt] = await Promise.all([
     countQuery(true),
     countQuery(false),
     countQuery(),
     query,
+    seatedCount(),
   ])
 
   const totalPages = Math.ceil((filteredCount ?? 0) / PER_PAGE)
@@ -88,6 +115,8 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
           inactiveCount={inactiveCount ?? 0}
           allCount={allCount ?? 0}
           hasPhone={hasPhone}
+          seated={seated}
+          seatedCount={seatedCt}
         />
       </Suspense>
     </div>

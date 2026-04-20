@@ -555,10 +555,10 @@ export async function POST(req: NextRequest) {
           }
           const fleetId = (assignRecs[0] as { fleet_id?: string }).fleet_id ?? '?'
 
-          // Pre-filter: only keep assignments where BOTH the vehicle and driver
-          // exist in their respective tables. The CSV often references vehicles or
-          // drivers not yet imported, which would violate FK constraints.
-          send({ type: 'progress', stage: 'validating', message: 'Validating against existing vehicles & drivers…', pct: 10 })
+          // Step 1: Auto-create driver stubs for any driver_id not already in the
+          // drivers table. This lets Drivers_List be uploaded before the full
+          // Drivers import (which enriches stubs with name, license, etc.).
+          send({ type: 'progress', stage: 'validating', message: 'Checking vehicles & creating driver stubs…', pct: 10 })
           const [{ data: existingVehs }, { data: existingDrvs }] = await Promise.all([
             supabaseService.from('vehicles').select('vehicle_number, fleet_id').eq('fleet_id', fleetId),
             supabaseService.from('drivers').select('driver_id'),
@@ -569,14 +569,36 @@ export async function POST(req: NextRequest) {
           const drvSet = new Set(
             (existingDrvs ?? []).map(d => d.driver_id)
           )
+
+          // Create stub rows for missing drivers so the FK is satisfied
+          const missingDriverIds = new Set<number>()
+          for (const r of assignRecs) {
+            const did = r.driver_id as number
+            if (!drvSet.has(did)) missingDriverIds.add(did)
+          }
+          if (missingDriverIds.size > 0) {
+            const stubs = Array.from(missingDriverIds).map(did => ({
+              driver_id: did,
+              fleet_id: fleetId,
+              active: true,
+              updated_at: new Date().toISOString(),
+            }))
+            await upsertAll('drivers', 'driver_id', stubs, 200)
+            // Add to the set so the filter below doesn't skip them
+            for (const did of missingDriverIds) drvSet.add(did)
+            send({ type: 'progress', stage: 'validating', message: `Created ${missingDriverIds.size} new driver stubs`, pct: 15 })
+          }
+
+          // Pre-filter: only keep assignments where the vehicle exists.
+          // Driver stubs were just created above, so only vehicles can block now.
           const validRecs = assignRecs.filter(r => {
             const vehKey = `${r.vehicle_number}|${r.fleet_id}`
-            return vehSet.has(vehKey) && drvSet.has(r.driver_id as number)
+            return vehSet.has(vehKey)
           })
           const skipped = assignRecs.length - validRecs.length
 
           if (validRecs.length === 0) {
-            send({ type: 'error', error: `All ${assignRecs.length} assignments reference vehicles not in the database. Upload CCSI.xlsx first to populate the vehicles table, then re-upload this file.` })
+            send({ type: 'error', error: `All ${assignRecs.length} assignments reference vehicles not in the database (fleet ${fleetId}). Upload CCSI.xlsx first to populate the vehicles table, then re-upload this file.` })
             controller.close(); return
           }
 
