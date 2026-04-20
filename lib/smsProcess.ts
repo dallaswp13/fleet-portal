@@ -24,12 +24,17 @@ import { executeM360Action, isClaudeAllowedAction, type ExecM360Result } from '@
  * action verb ('reboot') plus a flag telling us which device_id to look up.
  * Mirrors the client-side `resolveM360Action` in app/(app)/sms/page.tsx.
  */
+/**
+ * Map SMS action → M360 API action. Only two actions are currently configured:
+ * reboot_driver and reboot_pim. All others (clear_pim_bt, clear_dispatch,
+ * kiosk_*, support_*) are NOT yet wired up and return null so they never fire.
+ */
 function resolveM360Action(smsAction: string): { m360Action: string; isPim: boolean } | null {
   switch (smsAction) {
     case 'reboot_driver': return { m360Action: 'reboot', isPim: false }
     case 'reboot_pim':    return { m360Action: 'reboot', isPim: true }
-    case 'clear_pim_bt':  return { m360Action: 'clear_pim_bt', isPim: true }
-    case 'clear_dispatch':return { m360Action: 'clear_dispatch', isPim: false }
+    // clear_pim_bt, clear_dispatch, kiosk_enter, kiosk_exit, support_* are
+    // intentionally unmapped — not yet configured in the portal.
     default:              return null
   }
 }
@@ -53,9 +58,16 @@ IMPORTANT patterns to recognize:
 - Vehicle numbers are 1-4 digits. Lease numbers are typically 5 digits — do NOT confuse them.
 - If the message is NOT in English, translate it to English and detect the language.
 
+IMPORTANT — only two actions are currently configured for remote execution:
+- "reboot_driver" — reboot the driver (front) tablet
+- "reboot_pim" — reboot the PIM (back-seat) tablet
+All other actions ("kiosk_enter", "kiosk_exit", "clear_dispatch", "clear_pim_bt", "support_driver", "support_pim") are NOT yet configured and must NOT be used. If the issue doesn't call for one of the two reboots, use "unknown" and set needs_human to true.
+
+Confidence guidelines — be DECISIVE. If the driver's message clearly describes one of the two reboot scenarios (NoP/payment → reboot_pim, frozen/unresponsive tablet → reboot_driver), set confidence to "high" even if the wording is informal or in another language. Reserve "low" only for genuinely ambiguous messages where you truly cannot tell what the driver needs.
+
 Respond ONLY with valid JSON — no explanation, no markdown:
 {
-  "action": "reboot_driver"|"reboot_pim"|"kiosk_enter"|"kiosk_exit"|"clear_dispatch"|"clear_pim_bt"|"support_driver"|"support_pim"|"auto_reply"|"unknown",
+  "action": "reboot_driver"|"reboot_pim"|"unknown",
   "vehicle_number": "<1-4 digit cab/vehicle number as string, or empty — NOT lease number>",
   "lease_number": "<5+ digit lease number if found, else empty>",
   "target": "driver"|"pim"|"unknown",

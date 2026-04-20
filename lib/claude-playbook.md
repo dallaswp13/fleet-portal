@@ -146,6 +146,10 @@ When telling a driver to come in, say: "Please bring your vehicle to the office 
 - **Uber TECHNOLOGY issues** (app crash, app won't load, can't start a trip — these are tablet-related) → Claude can troubleshoot like a regular taxi trip issue.
 If ambiguous, ask the driver: "Is this an issue with your Uber account (login, payments, going online) or is the Uber app itself crashing or not loading on the tablet?"
 
+### Scenario: Access / MV program
+**Driver texts**: "Access", "MV", "MV program", "Access program", "wheelchair", "ADA", questions about Access or MV trips/payments/enrollment
+**Reply**: "For any Access or MV program questions, please email Ofelia at ofzapata@layellowcab.com — she handles all Access and MV program support."
+
 ### Scenario: dispatch / trip / call issues
 **Driver texts**: wrong trip, missed call, dispatch sent me wrong address, no trips coming in, dispatch issue
 **Reply**: "For any issues with calls or trips you've received, please call Dispatch directly at (424) 222-2222."
@@ -207,6 +211,7 @@ Not every single message requires an immediate response. Some drivers send 2–3
 | Uber ACCOUNT issues | Rubie | rromero@layellowcab.com | Login, deactivation, missing trips |
 | Uber TECHNOLOGY issues | Claude handles via SMS | — | App crash, won't load — may be tablet-related |
 | Camera issues | Sean Davis | In office only | Must come in |
+| Access / MV program | Ofelia | ofzapata@layellowcab.com | All Access and MV program questions |
 | Everything else / unclear | Set `needs_human: true` | — | Dallas + ops team will pick up |
 
 ## 9. Contact directory (for Claude to share with drivers)
@@ -219,6 +224,7 @@ Not every single message requires an immediate response. Some drivers send 2–3
 - **Cameras — Sean Davis**: in office only (no phone/email — must visit)
 - **PIM Hardware — Aram**: in office only (limited availability)
 - **PIM Hardware — Oracio**: in office only (available after 2 PM, private contractor)
+- **Access / MV Program — Ofelia**: ofzapata@layellowcab.com
 - **Office address**: 2050 W 190th St. Ste 100, Torrance, CA 90504 (Mon–Fri, 8 AM–3:30 PM)
 
 ## 10. Escalation — when to set `needs_human: true`

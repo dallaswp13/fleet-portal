@@ -33,10 +33,20 @@ interface ParseProgress {
  */
 async function renderPdfPages(pdfBuffer: ArrayBuffer): Promise<Buffer[]> {
   // pdfjs-dist is ESM-only; dynamic import of .mjs build for Node.js compat.
+  // @ts-ignore — .mjs path has no type declarations in some environments
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
 
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer) }).promise
+  // Disable the web worker — Vercel serverless doesn't bundle pdf.worker.mjs
+  // and there's no benefit to a worker thread in a short-lived lambda anyway.
+  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+  }).promise
   const pages: Buffer[] = []
 
   for (let i = 1; i <= doc.numPages; i++) {
