@@ -133,13 +133,20 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: 'No items linked to this action card' }, { status: 400 })
   }
 
+  // Fetch item names + current quantities so we can log before → after
+  const itemIds = lineItems.map(li => li.inventory_item_id)
+  const { data: itemRows } = await svc.from('inventory_items')
+    .select('id, name, quantity_new, quantity_used')
+    .in('id', itemIds)
+  const itemMap = new Map((itemRows ?? []).map(i => [i.id, i]))
+
   // Subtract from inventory (quantity_new first, overflow to quantity_used)
-  const results: { item_id: string; subtracted: number; remaining: number }[] = []
+  const changes: { name: string; qty_before: number; qty_after: number; subtracted: number }[] = []
   for (const li of lineItems) {
-    const { data: item } = await svc.from('inventory_items')
-      .select('quantity_new, quantity_used').eq('id', li.inventory_item_id).single()
+    const item = itemMap.get(li.inventory_item_id)
     if (!item) continue
 
+    const qtyBefore = item.quantity_new + item.quantity_used
     let toSubtract = li.quantity
     let newQty = item.quantity_new
     let usedQty = item.quantity_used
@@ -160,12 +167,11 @@ export async function PATCH(req: NextRequest) {
       updated_at: new Date().toISOString(),
     }).eq('id', li.inventory_item_id)
 
-    results.push({ item_id: li.inventory_item_id, subtracted: li.quantity, remaining: newQty + usedQty })
+    changes.push({ name: item.name, qty_before: qtyBefore, qty_after: newQty + usedQty, subtracted: li.quantity })
   }
 
-  // Audit log — card executed
+  // Audit log — card executed with full before/after detail
   const userEmail = auth.user!.email ?? auth.user!.id
-  // Get card name for the log
   const { data: cardInfo } = await svc.from('inventory_action_cards')
     .select('name').eq('id', body.card_id).single()
   writeAuditLog({
@@ -173,10 +179,12 @@ export async function PATCH(req: NextRequest) {
     action: 'inventory_card_execute',
     targetType: 'inventory',
     targetId: body.card_id,
-    payload: { card_name: cardInfo?.name ?? 'unknown', items_subtracted: results },
-    result: { total_items_affected: results.length },
+    payload: { card_name: cardInfo?.name ?? 'unknown', changes },
+    result: { total_items_affected: changes.length },
     success: true,
   })
+
+  const results = changes.map(c => ({ item_id: '', subtracted: c.subtracted, remaining: c.qty_after }))
 
   return NextResponse.json({ ok: true, results })
 }

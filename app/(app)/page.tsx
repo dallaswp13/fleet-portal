@@ -154,9 +154,83 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   ]
 
   const ACTION_LABELS: Record<string, string> = {
-    reboot: '↺ Reboot', wipe: '⚠ Wipe', kiosk_enter: '⬛ Kiosk On',
-    kiosk_exit: '⬜ Kiosk Off', clear_app_data: '🗑 Clear Data',
-    import_ccsi: '📊 Import CCSI', import_devices: '📱 Import Devices', import_verizon: '📡 Import Verizon',
+    reboot: 'Reboot', wipe: 'Factory Wipe', kiosk_enter: 'Kiosk Enter',
+    kiosk_exit: 'Kiosk Exit', clear_app_data: 'Clear App Data',
+    activate_sim: 'Activate SIM', import_ccsi: 'Import CCSI',
+    import_devices: 'Import Devices', import_verizon: 'Import Verizon',
+    inventory_create: 'Inv. Created', inventory_update: 'Inv. Updated',
+    inventory_adjust: 'Inv. Adjusted', inventory_delete: 'Inv. Deleted',
+    inventory_card_create: 'Card Created', inventory_card_update: 'Card Updated',
+    inventory_card_execute: 'Card Executed', inventory_card_delete: 'Card Deleted',
+  }
+
+  function badgeClass(action: string) {
+    if (action === 'wipe') return 'badge-red'
+    if (action.startsWith('import')) return 'badge-blue'
+    if (action.startsWith('inventory')) return 'badge-purple'
+    return 'badge-gray'
+  }
+
+  function formatDetails(log: Record<string, unknown>): string | null {
+    const p = log.payload as Record<string, unknown> | null
+    if (!p) return null
+
+    const action = log.action as string
+
+    if (action === 'inventory_card_execute' && Array.isArray(p.changes)) {
+      return (p.changes as { name: string; qty_before: number; qty_after: number; subtracted: number }[])
+        .map(c => `${c.name}: ${c.qty_before} → ${c.qty_after} (−${c.subtracted})`)
+        .join(', ')
+    }
+    if (action === 'inventory_card_execute' && Array.isArray(p.items_subtracted)) {
+      return (p.items_subtracted as { subtracted: number; remaining: number }[])
+        .map(c => `−${c.subtracted}, ${c.remaining} left`)
+        .join('; ')
+    }
+    if (action === 'inventory_adjust' && p.previous !== undefined) {
+      const label = p.name ? String(p.name) : ''
+      return `${label}: ${p.previous} → ${p.new_value} (${Number(p.delta) > 0 ? '+' : ''}${p.delta} ${p.field ?? 'new'})`
+    }
+    if (action === 'inventory_update' && p.changes && typeof p.changes === 'object') {
+      const changes = p.changes as Record<string, { from: unknown; to: unknown }>
+      const parts = Object.entries(changes)
+        .filter(([k]) => !['updated_at', 'updated_by'].includes(k))
+        .map(([k, v]) => {
+          const lbl = k.replace(/_/g, ' ').replace('quantity ', 'qty ')
+          return `${lbl}: ${v.from ?? '—'} → ${v.to ?? '—'}`
+        })
+      return parts.length > 0 ? `${p.name ? String(p.name) + ' — ' : ''}${parts.join(', ')}` : null
+    }
+    if (action === 'inventory_create' && p.name) {
+      const parts: string[] = [`"${p.name}"`]
+      if (p.quantity_new) parts.push(`new: ${p.quantity_new}`)
+      if (p.quantity_used) parts.push(`used: ${p.quantity_used}`)
+      return parts.join(', ')
+    }
+    if (action === 'inventory_delete' && p.name) return `Deleted "${p.name}"`
+    if (action.startsWith('inventory_card_') && p.card_name) {
+      if (action === 'inventory_card_delete') return `Deleted "${p.card_name}"`
+      const items = p.items_count ? ` (${p.items_count} items)` : ''
+      return `"${p.card_name}"${items}`
+    }
+    if (action.startsWith('import') && p.filename) {
+      const r = log.result as Record<string, unknown> | null
+      const total = r?.total ?? ''
+      return `${p.filename}${total ? ` — ${total} rows` : ''}${p.skipped ? `, ${p.skipped} skipped` : ''}`
+    }
+    if (log.vehicle_number && log.result) {
+      const r = log.result as Record<string, unknown>
+      return r.message ? String(r.message) : null
+    }
+    return null
+  }
+
+  function getLink(log: Record<string, unknown>): string | null {
+    if (log.target_type === 'inventory') return '/inventory'
+    if (log.vehicle_number) return `/fleet/vehicles?q=${log.vehicle_number}`
+    if (log.target_type === 'device') return '/fleet/devices'
+    if ((log.action as string).startsWith('import')) return '/settings?tab=data'
+    return null
   }
 
   // ── Build SMS Activity data ──
@@ -259,19 +333,46 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Time</th><th>Action</th><th>Vehicle</th><th>Target</th><th>User</th><th>Status</th></tr>
+                <tr><th>Time</th><th>Action</th><th>Details</th><th>Vehicle #</th><th>User</th><th>Result</th></tr>
               </thead>
               <tbody>
-                {recentAudit.map(log => (
-                  <tr key={log.id}>
-                    <td className="mono text-dim" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>{new Date(log.created_at).toLocaleString()}</td>
-                    <td><span className={`badge ${log.action === 'wipe' ? 'badge-red' : log.action?.startsWith('import') ? 'badge-blue' : 'badge-gray'}`}>{ACTION_LABELS[log.action] ?? log.action}</span></td>
-                    <td>{log.vehicle_number ? <span className="tag">#{log.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
-                    <td className="mono truncate" style={{ maxWidth: 180, fontSize: 11 }}>{log.target_id}</td>
-                    <td className="text-dim truncate" style={{ maxWidth: 160, fontSize: 11 }}>{log.user_email}</td>
-                    <td><span className={`badge ${log.success ? 'badge-green' : 'badge-red'}`}>{log.success ? '✓ OK' : '✗ Failed'}</span></td>
+                {recentAudit.map((log: Record<string, unknown>) => {
+                  const details = formatDetails(log)
+                  const link = getLink(log)
+                  const action = log.action as string
+                  const target = log.target_type === 'inventory' && (log.payload as Record<string, unknown> | null)?.name
+                    ? String((log.payload as Record<string, unknown>).name)
+                    : log.target_type === 'inventory' && (log.payload as Record<string, unknown> | null)?.card_name
+                      ? String((log.payload as Record<string, unknown>).card_name)
+                      : String(log.target_id ?? '')
+
+                  return (
+                  <tr key={String(log.id)} style={{ cursor: link ? 'pointer' : undefined }}
+                    onClick={link ? undefined : undefined}
+                    {...(link ? { 'data-href': link } : {})}>
+                    <td className="mono text-dim" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+                      {new Date(String(log.created_at)).toLocaleString()}
+                    </td>
+                    <td>
+                      <span className={`badge ${badgeClass(action)}`}>
+                        {ACTION_LABELS[action] ?? action}
+                      </span>
+                      {link && <a href={link} style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 4 }}>→</a>}
+                    </td>
+                    <td style={{ fontSize: 11, maxWidth: 360, color: 'var(--text2)' }}>
+                      <div style={{ fontWeight: 500 }}>{target}</div>
+                      {details && (
+                        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2, lineHeight: 1.4, whiteSpace: 'normal' }}>
+                          {details}
+                        </div>
+                      )}
+                    </td>
+                    <td>{log.vehicle_number ? <span className="tag">#{String(log.vehicle_number)}</span> : <span className="text-dim">—</span>}</td>
+                    <td className="text-dim truncate" style={{ maxWidth: 160, fontSize: 11 }}>{String(log.user_email ?? '')}</td>
+                    <td><span className={`badge ${log.success ? 'badge-green' : 'badge-red'}`}>{log.success ? '✓' : '✗'}</span></td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

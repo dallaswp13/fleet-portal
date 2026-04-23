@@ -64,7 +64,22 @@ export default async function DriversPage({ searchParams }: { searchParams: Prom
     }
     if (search) {
       const like = `%${search}%`
-      q = q.or(`name.ilike.${like},email.ilike.${like},driver_id::text.ilike.${like},personal_phone.ilike.${like},drivers_license.ilike.${like}`)
+      // Text fields: name, email, phone, license
+      const parts = [
+        `name.ilike.${like}`,
+        `email.ilike.${like}`,
+        `personal_phone.ilike.${like}`,
+        `drivers_license.ilike.${like}`,
+        `fleet_id.ilike.${like}`,
+      ]
+      // Integer fields: driver_id (lease #), seated_vehicle_number (cab #)
+      // PostgREST can't cast integers to text in .or(), so use .eq for numeric searches
+      const num = parseInt(search, 10)
+      if (!isNaN(num)) {
+        parts.push(`driver_id.eq.${num}`)
+        parts.push(`seated_vehicle_number.eq.${num}`)
+      }
+      q = q.or(parts.join(','))
     }
     return q
   }

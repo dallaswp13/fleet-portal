@@ -138,6 +138,85 @@ export default function AuditLogView() {
     return 'badge-gray'
   }
 
+  /** Build a human-readable detail string from the audit log payload */
+  function formatDetails(log: AuditLog): string | null {
+    const p = log.payload
+    if (!p) return null
+
+    // Inventory card execute — show each item's before → after
+    if (log.action === 'inventory_card_execute' && Array.isArray(p.changes)) {
+      return (p.changes as { name: string; qty_before: number; qty_after: number; subtracted: number }[])
+        .map(c => `${c.name}: ${c.qty_before} → ${c.qty_after} (−${c.subtracted})`)
+        .join(', ')
+    }
+    // Legacy card execute format
+    if (log.action === 'inventory_card_execute' && Array.isArray(p.items_subtracted)) {
+      return (p.items_subtracted as { subtracted: number; remaining: number }[])
+        .map(c => `−${c.subtracted}, ${c.remaining} left`)
+        .join('; ')
+    }
+
+    // Inventory adjust — show field before → after
+    if (log.action === 'inventory_adjust' && p.previous !== undefined) {
+      const label = p.name ? String(p.name) : ''
+      return `${label}: ${p.previous} → ${p.new_value} (${Number(p.delta) > 0 ? '+' : ''}${p.delta} ${p.field ?? 'new'})`
+    }
+
+    // Inventory update — show changed fields
+    if (log.action === 'inventory_update' && p.changes && typeof p.changes === 'object') {
+      const changes = p.changes as Record<string, { from: unknown; to: unknown }>
+      const parts = Object.entries(changes)
+        .filter(([k]) => !['updated_at', 'updated_by'].includes(k))
+        .map(([k, v]) => {
+          const label = k.replace(/_/g, ' ').replace('quantity ', 'qty ')
+          return `${label}: ${v.from ?? '—'} → ${v.to ?? '—'}`
+        })
+      return parts.length > 0 ? `${p.name ? String(p.name) + ' — ' : ''}${parts.join(', ')}` : null
+    }
+
+    // Inventory create
+    if (log.action === 'inventory_create' && p.name) {
+      const parts: string[] = [`"${p.name}"`]
+      if (p.quantity_new) parts.push(`new: ${p.quantity_new}`)
+      if (p.quantity_used) parts.push(`used: ${p.quantity_used}`)
+      return parts.join(', ')
+    }
+
+    // Inventory delete
+    if (log.action === 'inventory_delete' && p.name) return `Deleted "${p.name}"`
+
+    // Inventory card create/update/delete
+    if (log.action.startsWith('inventory_card_') && p.card_name) {
+      if (log.action === 'inventory_card_delete') return `Deleted "${p.card_name}"`
+      const items = p.items_count ? ` (${p.items_count} items)` : ''
+      return `"${p.card_name}"${items}`
+    }
+
+    // Import actions
+    if (log.action.startsWith('import') && p.filename) {
+      const r = log.result as Record<string, unknown> | null
+      const total = r?.total ?? ''
+      return `${p.filename}${total ? ` — ${total} rows` : ''}${p.skipped ? `, ${p.skipped} skipped` : ''}`
+    }
+
+    // M360 device actions (reboot, wipe, etc.)
+    if (log.vehicle_number && log.result) {
+      const r = log.result as Record<string, unknown>
+      return r.message ? String(r.message) : null
+    }
+
+    return null
+  }
+
+  /** Return a link URL for the log entry, or null if not linkable */
+  function getLink(log: AuditLog): string | null {
+    if (log.target_type === 'inventory') return '/inventory'
+    if (log.vehicle_number) return `/fleet/vehicles?q=${log.vehicle_number}`
+    if (log.target_type === 'device') return '/fleet/devices'
+    if (log.action.startsWith('import')) return '/settings?tab=data'
+    return null
+  }
+
   return (
     <div>
       {/* ── FILTER BAR ── */}
@@ -217,13 +296,23 @@ export default function AuditLogView() {
           <table>
             <thead>
               <tr>
-                <th>Timestamp</th><th>Action</th><th>Vehicle #</th>
-                <th>Target</th><th>Type</th><th>User</th><th>Result</th>
+                <th>Timestamp</th><th>Action</th><th>Details</th>
+                <th>Vehicle #</th><th>User</th><th>Result</th>
               </tr>
             </thead>
             <tbody>
-              {logs.map(log => (
-                <tr key={log.id}>
+              {logs.map(log => {
+                const details = formatDetails(log)
+                const link = getLink(log)
+                const target = log.target_type === 'inventory' && log.payload?.name
+                  ? String(log.payload.name)
+                  : log.target_type === 'inventory' && log.payload?.card_name
+                    ? String(log.payload.card_name)
+                    : log.target_id
+
+                return (
+                <tr key={log.id} style={{ cursor: link ? 'pointer' : undefined }}
+                  onClick={() => { if (link) window.location.href = link }}>
                   <td className="mono text-dim" style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
                     {new Date(log.created_at).toLocaleString()}
                   </td>
@@ -231,18 +320,22 @@ export default function AuditLogView() {
                     <span className={`badge ${badgeClass(log.action)}`}>
                       {ACTION_LABELS[log.action] ?? log.action}
                     </span>
+                    {link && <span style={{ fontSize: 9, color: 'var(--accent)', marginLeft: 4 }}>→</span>}
+                  </td>
+                  <td style={{ fontSize: 11, maxWidth: 360, color: 'var(--text2)' }}>
+                    <div style={{ fontWeight: 500 }}>{target}</div>
+                    {details && (
+                      <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2, lineHeight: 1.4, whiteSpace: 'normal' }}>
+                        {details}
+                      </div>
+                    )}
                   </td>
                   <td>{log.vehicle_number ? <span className="tag">#{log.vehicle_number}</span> : <span className="text-dim">—</span>}</td>
-                  <td className="mono truncate" style={{ maxWidth: 200, fontSize: 11 }}>
-                    {log.target_type === 'inventory' && log.payload?.name
-                      ? String(log.payload.name)
-                      : log.target_id}
-                  </td>
-                  <td><span className="badge badge-gray">{log.target_type}</span></td>
                   <td className="text-dim truncate" style={{ maxWidth: 180, fontSize: 11 }}>{log.user_email}</td>
-                  <td><span className={`badge ${log.success ? 'badge-green' : 'badge-red'}`}>{log.success ? '✓ OK' : '✗ Failed'}</span></td>
+                  <td><span className={`badge ${log.success ? 'badge-green' : 'badge-red'}`}>{log.success ? '✓' : '✗'}</span></td>
                 </tr>
-              ))}
+                )
+              })}
               {!loading && logs.length === 0 && (
                 <tr><td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text3)' }}>
                   {hasFilters ? 'No records match your filters.' : 'No audit records yet.'}
