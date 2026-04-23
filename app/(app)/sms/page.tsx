@@ -32,6 +32,9 @@ interface SmsMessage {
   claude_feedback_note: string | null
   claude_feedback_at: string | null
   claude_feedback_by: string | null
+  claude_classification: string | null
+  rule_override: string | null
+  feedback_category: string | null
 }
 
 interface SmsRule {
@@ -393,13 +396,32 @@ export default function SmsPage() {
     }
   }
 
+  /** Derive a feedback category from a message's action and text for category-aware feedback. */
+  function deriveFeedbackCategory(msg: SmsMessage): string {
+    const action = msg.claude_classification || msg.action || ''
+    const text = (msg.sms_text || '').toLowerCase()
+    // Content-based checks first (more precise)
+    if (/\bnop\b|\bno\s*p\b|\bpim\b|\bpayment\b|\bcredit\s*card\b|\bsquare\b|\brojo\b|\bback\s*tablet\b/i.test(text)) return 'pim-payment'
+    if (/\bmeter\b|\bmiter\b|\bmuter\b|\bfare\b|\bstart\s*trip\b|\bnom\b|\bno\s*meter\b/i.test(text)) return 'meter'
+    if (/\buber\b|\bgreen\s*button\b|\brideshare\b/i.test(text)) return 'uber-integration'
+    if (/\bsignal\b|\bgps\b|\bcellular\b|\bnetwork\b|\bno\s*connection\b/i.test(text)) return 'connectivity'
+    if (/\bno\s*(bids|calls)\b|\bcall\s*drop/i.test(text)) return 'dispatch-calls'
+    if (/\bregistration\b|\bplate\b|\baccount\b|\baccess\b/i.test(text)) return 'account-profile'
+    // Fall back to action-based
+    if (action.includes('pim')) return 'pim-payment'
+    if (action === 'reboot_driver' || action === 'clear_dispatch' || action === 'clear_app_data') return 'tablet-app'
+    return 'general'
+  }
+
   async function submitFeedback(msg: SmsMessage, rating: 'up' | 'down' | null, note: string) {
     setSavingFeedback(true)
     try {
+      // Derive issue category from the message's action for feedback tagging
+      const category = rating === 'down' ? deriveFeedbackCategory(msg) : undefined
       const res = await fetch('/api/sms/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: msg.id, rating, note: note.trim() || undefined }),
+        body: JSON.stringify({ messageId: msg.id, rating, note: note.trim() || undefined, category }),
       })
       const data = await res.json()
       if (!data.ok) {
@@ -821,6 +843,11 @@ export default function SmsPage() {
                     {msg.direction === 'inbound' && msg.action && msg.action !== 'unknown' && (
                       <span className="badge badge-blue" style={{ fontSize: 9 }}>{ACTION_LABELS[msg.action] ?? msg.action}</span>
                     )}
+                    {msg.direction === 'inbound' && msg.rule_override && msg.claude_classification && msg.rule_override !== msg.claude_classification && (
+                      <span className="badge badge-purple" style={{ fontSize: 9 }} title={`Claude said: ${msg.claude_classification}, Rule overrode to: ${msg.rule_override}`}>
+                        Rule override
+                      </span>
+                    )}
                     {msg.direction === 'inbound' && msg.confidence && (
                       <span className={`badge ${confidenceColor(msg.confidence)}`} style={{ fontSize: 9 }}>{msg.confidence}</span>
                     )}
@@ -864,6 +891,9 @@ export default function SmsPage() {
                           title={msg.claude_feedback_note}>
                           Correction: &ldquo;{msg.claude_feedback_note}&rdquo;
                         </span>
+                      )}
+                      {msg.claude_feedback === 'down' && msg.feedback_category && (
+                        <span className="badge badge-gray" style={{ fontSize: 9 }}>{msg.feedback_category}</span>
                       )}
                       {msg.claude_feedback && (
                         <button
@@ -1101,7 +1131,7 @@ export default function SmsPage() {
             </div>
 
             <div style={{ padding: '8px 20px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', background: 'var(--bg3)' }}>
-              Rules run before Claude. If any keyword rule matches, Claude does NOT reply — the admin handles via Execute. If no rule matches, Claude generates a conversational reply in the driver&rsquo;s language and learns from your thumbs-down corrections.
+              Claude classifies every message first. Rules act as overrides when they disagree with Claude&rsquo;s classification. Both are logged for analytics. Your thumbs-down corrections are fed into future prompts as &ldquo;lessons learned&rdquo; and prioritized by issue category.
             </div>
           </div>
         </div>

@@ -219,21 +219,43 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   const ruleActions = ruleMatch?.actions ?? []
   const primaryAction = ruleActions.find(a => a !== 'auto_reply') ?? ruleActions[0] ?? null
 
-  // 2. Intent parsing
+  // 2. Intent parsing — Claude-first architecture
+  //
+  // Always run Claude classification on every message. Then check rules as
+  // an override layer: if a rule matches and its action DIFFERS from Claude's,
+  // the rule wins (it's a known correction). If they agree, Claude's fuller
+  // context is used. This gives consistent classification for analytics plus
+  // a mechanism to hard-override Claude when needed.
+  const claudeIntent = await parseWithClaude(smsText)
+  const claudeClassification = claudeIntent.action // always stored for analytics
+
   let intent: Intent
+  let ruleOverride: string | null = null
+
   if (ruleMatch && primaryAction) {
-    intent = {
-      action: primaryAction,
-      vehicle_number: extractVehicleNumber(smsText),
-      lease_number: extractLeaseNumber(smsText),
-      target: primaryAction.includes('pim') ? 'pim' : 'driver',
-      confidence: 'high',
-      reason: `Rule: ${ruleMatch.name}`,
-      translated_text: '',
-      source_language: '',
+    if (primaryAction !== claudeIntent.action) {
+      // Rule overrides Claude's classification — use the rule's action
+      ruleOverride = primaryAction
+      intent = {
+        action: primaryAction,
+        vehicle_number: claudeIntent.vehicle_number || extractVehicleNumber(smsText),
+        lease_number: claudeIntent.lease_number || extractLeaseNumber(smsText),
+        target: primaryAction.includes('pim') ? 'pim' : 'driver',
+        confidence: 'high',
+        reason: `Rule override: ${ruleMatch.name} (Claude said: ${claudeIntent.action})`,
+        translated_text: claudeIntent.translated_text,
+        source_language: claudeIntent.source_language,
+      }
+    } else {
+      // Rule agrees with Claude — use Claude's richer context
+      intent = {
+        ...claudeIntent,
+        confidence: 'high', // rule confirmation upgrades confidence
+        reason: `Claude + Rule agree: ${ruleMatch.name}`,
+      }
     }
   } else {
-    intent = await parseWithClaude(smsText)
+    intent = claudeIntent
   }
 
   // 3. Vehicle resolution via sender phone
@@ -331,6 +353,117 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     if (vehicleByNum) {
       vehicleId = vehicleByNum.id
       vehicleNameKey = vehicleByNum.vehicle_name_key
+    }
+  }
+
+  // 3b. Unknown-vehicle prompting flow
+  //
+  // If vehicle resolution failed AND we couldn't extract a cab # from the message:
+  //   A. Check if the sender has a recent 'awaiting_vehicle' message — if so,
+  //      this new message is their cab-number reply. Parse it, link the original
+  //      message, and save the phone→driver mapping for future auto-resolve.
+  //   B. If no prior awaiting_vehicle: ask the driver for their cab number.
+  if (!vehicleId && !vehicleNum && senderPhone && isTwilioConfigured()) {
+    // Check for a pending awaiting_vehicle message from this sender
+    const { data: pendingMsg } = await svc.from('sms_messages')
+      .select('id, sms_text, action')
+      .eq('sender_phone', senderPhone)
+      .eq('claude_status', 'awaiting_vehicle')
+      .neq('id', messageId)
+      .order('received_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (pendingMsg) {
+      // This message is likely the driver's cab-number reply.
+      // Try to parse a 3-4 digit cab number from the raw text.
+      const cabReply = smsText.trim().match(/^\s*#?\s*(\d{3,4})\s*$/)
+      if (cabReply) {
+        vehicleNum = cabReply[1]
+        // Look up the vehicle
+        const { data: vehicleByNum } = await svc.from('vehicles')
+          .select('id, vehicle_name_key, fleet_id')
+          .eq('vehicle_number', parseInt(vehicleNum))
+          .in('fleet_id', ASC_FLEET_IDS)
+          .limit(1).maybeSingle()
+        if (vehicleByNum) {
+          vehicleId = vehicleByNum.id
+          vehicleNameKey = vehicleByNum.vehicle_name_key
+
+          // Retroactively update the original awaiting_vehicle message
+          await svc.from('sms_messages').update({
+            vehicle_id: vehicleId,
+            vehicle_number: vehicleNum,
+            claude_status: 'thinking', // re-queue for processing
+          }).eq('id', pendingMsg.id)
+
+          // Save the phone→driver mapping so future messages auto-resolve.
+          // Find or create the driver row linked to this vehicle via assignments.
+          const { data: assign } = await svc.from('driver_vehicle_assignments')
+            .select('driver_id')
+            .eq('vehicle_number', parseInt(vehicleNum))
+            .limit(1).maybeSingle()
+          if (assign) {
+            // Update the driver's personal_phone_norm so phone lookup works next time
+            await svc.from('drivers')
+              .update({ personal_phone_norm: senderPhone })
+              .eq('driver_id', assign.driver_id)
+            console.log(`[smsProcess] saved phone mapping: ${senderPhone} → driver ${assign.driver_id} (cab #${vehicleNum})`)
+          }
+
+          // Re-process the original message's intent now that we have a vehicle
+          // (the handleClaudeConversation call below will handle the current message)
+          console.log(`[smsProcess] cab-number reply from ${senderPhone}: #${vehicleNum}, re-linked original msg ${pendingMsg.id}`)
+        }
+      }
+    } else if (!pendingMsg) {
+      // No pending awaiting_vehicle — this is a new unknown sender.
+      // Auto-reply asking for cab number and mark this message as awaiting.
+      const isSpanish = /[áéíóúñ¿¡]|hola|ayuda|buenas|buenos|por\s*favor/i.test(smsText)
+      const askBody = isSpanish
+        ? '¿Cuál es tu número de taxi? Responde solo con el número y te ayudo enseguida.'
+        : "What's your cab number? Reply with just the number and I'll get you help right away."
+      const askResult = await sendSms(senderPhone, askBody)
+
+      // Insert outbound row for the cab-number prompt
+      const fromLabel = getTwilioNumber() || getMessagingServiceSid() || 'Fleet Portal'
+      await svc.from('sms_messages').insert({
+        gmail_id: `vehicle_ask_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        sender: 'System',
+        sender_phone: fromLabel,
+        sms_text: askBody,
+        direction: 'outbound',
+        source: 'twilio',
+        twilio_sid: askResult.sid ?? null,
+        recipient_phone: senderPhone,
+        action: 'ask_vehicle',
+        processed: true,
+        success: askResult.success,
+        result: 'Asked driver for cab number',
+        received_at: new Date().toISOString(),
+      }).then(({ error: outErr }) => {
+        if (outErr) console.error('[smsProcess] failed to insert vehicle-ask outbound:', outErr.message)
+      })
+
+      // Mark the inbound message as awaiting_vehicle and return early
+      await svc.from('sms_messages').update({
+        action: intent.action,
+        confidence: intent.confidence,
+        reason: intent.reason || null,
+        claude_status: 'awaiting_vehicle',
+        processed: true,
+        result: 'Awaiting cab number from driver',
+        translated_text: intent.translated_text || null,
+        source_language: intent.source_language || null,
+      }).eq('id', messageId)
+
+      return {
+        matchedRuleId: null,
+        action: intent.action,
+        autoReplySent: askResult.success,
+        autoReplyError: askResult.success ? null : (askResult.error ?? null),
+        result: 'Awaiting cab number from driver',
+      }
     }
   }
 
@@ -506,6 +639,9 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
     processed: true,
     translated_text: intent.translated_text || null,
     source_language: intent.source_language || null,
+    // Feature 3: Always store Claude's classification + rule override for analytics
+    claude_classification: claudeClassification,
+    rule_override: ruleOverride,
   }
   // Only overwrite claude_status when a rule matched; otherwise the
   // conversational path (step 6) will set 'thinking' → 'replied' / 'failed'
@@ -513,8 +649,9 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   if (ruleMatch) update.claude_status = derivedClaudeStatus
 
   let { error: updErr } = await svc.from('sms_messages').update(update).eq('id', messageId)
-  if (updErr && /translated_text|source_language/i.test(updErr.message)) {
-    const { translated_text, source_language, ...legacy } = update
+  if (updErr && /translated_text|source_language|claude_classification|rule_override|feedback_category/i.test(updErr.message)) {
+    // Graceful fallback: strip columns that may not exist if migration 040 hasn't run
+    const { translated_text, source_language, claude_classification, rule_override, ...legacy } = update
     const retry = await svc.from('sms_messages').update(legacy).eq('id', messageId)
     updErr = retry.error
   }
@@ -561,25 +698,77 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
 //     contextually aware (e.g. "Hi John, for vehicle #4021…").
 //   * Detects driver's language and instructs Claude to reply in kind.
 
-/**
- * Load the editable playbook document that defines Claude's training.
- * Cached on first read — in Vercel/Next.js this survives for the lifetime
- * of the lambda, which is ideal since the file is only updated via deploy.
- *
- * Returns empty string if the file can't be read so the bot still works
- * with the minimal baseline prompt below.
- */
-let _cachedPlaybook: string | null = null
-function loadPlaybook(): string {
-  if (_cachedPlaybook !== null) return _cachedPlaybook
+// ── Structured Playbook Loading ──────────────────────────────────────────────
+//
+// The playbook is split into a main file (general rules) plus 7 category-
+// specific files with detailed resolution steps and response templates.
+// After Claude classifies the intent, we load the matching category file
+// so the conversational reply is grounded in the right troubleshooting flow.
+
+const _playbookCache = new Map<string, string>()
+
+function loadPlaybookFile(filename: string): string {
+  const cached = _playbookCache.get(filename)
+  if (cached !== undefined) return cached
   try {
-    const path = join(process.cwd(), 'lib', 'claude-playbook.md')
-    _cachedPlaybook = readFileSync(path, 'utf8')
+    const filePath = join(process.cwd(), 'lib', 'playbook', filename)
+    const content = readFileSync(filePath, 'utf8')
+    _playbookCache.set(filename, content)
+    return content
   } catch (err) {
-    console.warn('[smsProcess] could not read claude-playbook.md — using baseline prompt only:', err)
-    _cachedPlaybook = ''
+    console.warn(`[smsProcess] could not read playbook/${filename}:`, err)
+    _playbookCache.set(filename, '')
+    return ''
   }
-  return _cachedPlaybook
+}
+
+/** Load the main playbook (general rules). */
+function loadMainPlaybook(): string {
+  return loadPlaybookFile('index.md')
+}
+
+/**
+ * Map classified action → category playbook file.
+ * After the initial Claude intent classification, this tells us which
+ * category-specific file to load for the conversational reply.
+ */
+const ACTION_CATEGORY_MAP: Record<string, string> = {
+  'reboot_pim':      'pim-payment.md',
+  'clear_pim_bt':    'pim-payment.md',
+  'reboot_driver':   'tablet-app.md',   // default for driver reboot
+  'clear_dispatch':  'tablet-app.md',
+  'clear_app_data':  'tablet-app.md',
+  'unknown':         'index.md',        // fallback: full playbook
+}
+
+/**
+ * Content-based keyword routing for more precise category selection.
+ * Runs AFTER action-based mapping to override when message content
+ * gives a stronger signal than the generic action classification.
+ */
+const CONTENT_CATEGORY_OVERRIDES: { patterns: RegExp[]; file: string }[] = [
+  { patterns: [/\bmeter\b/i, /\bmiter\b/i, /\bmuter\b/i, /\bmutter\b/i, /\bmitir\b/i, /\bmileage\b/i, /\bmilage\b/i, /\bfare\b/i, /\bstart\s*trip\b/i, /\btrip\s*code\b/i, /\bnom\b/i, /\bno\s*meter\b/i, /\bmedidor\b/i], file: 'meter.md' },
+  { patterns: [/\buber\b/i, /\bgreen\s*button\b/i, /\brideshare\b/i, /\boffer\s*failed\b/i], file: 'uber-integration.md' },
+  { patterns: [/\bsignal\b/i, /\bgps\b/i, /\bcellular\b/i, /\bnetwork\b/i, /\bno\s*connection\b/i, /\bzone/i, /\bseñal\b/i], file: 'connectivity.md' },
+  { patterns: [/\bno\s*(bids|calls)\b/i, /\bbid\b/i, /\bcall\s*drop/i, /\bduplicate\s*dispatch\b/i, /\bno\s*sound\b/i, /\bnotification\b/i, /\bno.*coming\s*in\b/i], file: 'dispatch-calls.md' },
+  { patterns: [/\bregistration\b/i, /\bplate\b/i, /\bbalance\b/i, /\baccess\b/i, /\baccount\b/i, /\blocked\b/i, /\bsuspend/i], file: 'account-profile.md' },
+  { patterns: [/\bnop\b/i, /\bno\s*p\b/i, /\bno\s*payment\b/i, /\bcredit\s*card\b/i, /\bcard\s*(reader|machine|not)\b/i, /\bpim\b/i, /\bsquare\b/i, /\brojo\b/i, /\bback\s*tablet\b/i, /\bpayment\b/i], file: 'pim-payment.md' },
+]
+
+/**
+ * Select the best category playbook file for a given action + message text.
+ * Returns the filename (e.g. 'pim-payment.md') to load from lib/playbook/.
+ */
+function selectCategoryPlaybook(action: string, messageText: string): string {
+  // First: check content-based overrides (more precise than action mapping)
+  const lower = messageText.toLowerCase()
+  for (const override of CONTENT_CATEGORY_OVERRIDES) {
+    if (override.patterns.some(p => p.test(lower))) {
+      return override.file
+    }
+  }
+  // Fall back to action-based mapping
+  return ACTION_CATEGORY_MAP[action] ?? ACTION_CATEGORY_MAP['unknown']
 }
 
 const CONVERSATION_SYSTEM_PROMPT = `You are an AI IT support assistant for LA Yellow Cab's fleet.
@@ -662,22 +851,52 @@ async function fetchConversationHistory(svc: Svc, senderPhone: string, limit = 1
   }))
 }
 
-async function fetchRecentLessons(svc: Svc, limit = 15): Promise<string[]> {
+async function fetchRecentLessons(svc: Svc, limit = 15, currentCategory?: string): Promise<string[]> {
   // Pull recent thumbs-down feedback notes — these are Dallas's corrections on
   // Claude's past replies. We inject them into the prompt so Claude doesn't
   // repeat the same mistake.
+  //
+  // When a currentCategory is provided (Feature 4), prioritize feedback from
+  // the SAME category first, then backfill with general/other-category notes.
   const cutoff = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
-  const { data } = await svc.from('sms_messages')
-    .select('claude_feedback_note, sms_text')
-    .eq('claude_feedback', 'down')
-    .not('claude_feedback_note', 'is', null)
-    .gte('claude_feedback_at', cutoff)
-    .order('claude_feedback_at', { ascending: false })
-    .limit(limit)
-  const rows = (data ?? []) as { claude_feedback_note: string | null; sms_text: string | null }[]
-  return rows
-    .map(r => r.claude_feedback_note?.trim())
-    .filter((s): s is string => !!s && s.length > 0)
+
+  const lessons: string[] = []
+
+  // First: same-category feedback (most relevant)
+  if (currentCategory) {
+    const { data: catData } = await svc.from('sms_messages')
+      .select('claude_feedback_note')
+      .eq('claude_feedback', 'down')
+      .eq('feedback_category', currentCategory)
+      .not('claude_feedback_note', 'is', null)
+      .gte('claude_feedback_at', cutoff)
+      .order('claude_feedback_at', { ascending: false })
+      .limit(limit)
+    const catRows = (catData ?? []) as { claude_feedback_note: string | null }[]
+    for (const r of catRows) {
+      const note = r.claude_feedback_note?.trim()
+      if (note) lessons.push(note)
+    }
+  }
+
+  // Then: all feedback (to fill remaining slots)
+  if (lessons.length < limit) {
+    const { data } = await svc.from('sms_messages')
+      .select('claude_feedback_note')
+      .eq('claude_feedback', 'down')
+      .not('claude_feedback_note', 'is', null)
+      .gte('claude_feedback_at', cutoff)
+      .order('claude_feedback_at', { ascending: false })
+      .limit(limit)
+    const rows = (data ?? []) as { claude_feedback_note: string | null }[]
+    for (const r of rows) {
+      const note = r.claude_feedback_note?.trim()
+      if (note && !lessons.includes(note)) lessons.push(note)
+      if (lessons.length >= limit) break
+    }
+  }
+
+  return lessons
 }
 
 async function fetchKnownIssues(svc: Svc): Promise<{ title: string; body: string | null; priority: string }[]> {
@@ -783,14 +1002,21 @@ async function generateDriverReply(
     return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'ANTHROPIC_API_KEY not set', needsHuman: true, error: 'no_api_key' }
   }
 
+  // ── Classify the message first to select the right category playbook ──
+  // We run a quick intent parse so we know which category file to load AND
+  // which category's feedback to prioritize in the lessons.
+  const quickIntent = await parseWithClaude(smsText)
+  const categoryFile = selectCategoryPlaybook(quickIntent.action, smsText)
+  const feedbackCategory = categoryFile.replace('.md', '') // e.g. 'pim-payment', 'meter'
+
   const [history, lessons, vehCtx, knownIssues] = await Promise.all([
     fetchConversationHistory(svc, senderPhone, 10),
-    fetchRecentLessons(svc, 15),
+    fetchRecentLessons(svc, 15, feedbackCategory !== 'index' ? feedbackCategory : undefined),
     fetchVehicleContext(svc, senderPhone),
     fetchKnownIssues(svc),
   ])
 
-  // Build dynamic system prompt: base + driver context + lessons + known issues.
+  // Build dynamic system prompt: base + playbooks + driver context + lessons + known issues.
   const contextLines: string[] = []
   if (vehCtx.driver_name)     contextLines.push(`Driver name: ${vehCtx.driver_name}`)
   if (vehCtx.vehicle_number)  contextLines.push(`Vehicle: #${vehCtx.vehicle_number}${vehCtx.fleet_id ? ' (' + vehCtx.fleet_id.toUpperCase() + ')' : ''}`)
@@ -805,10 +1031,13 @@ async function generateDriverReply(
     ? `\n\n# Known issues (from Rylo Tracker — currently open)\nIf the driver's message relates to any of these, acknowledge the issue and set action to "log_known_issue". Do NOT troubleshoot fleet-wide problems.\n${knownIssues.map((ki, i) => `${i + 1}. [${ki.priority.toUpperCase()}] ${ki.title}${ki.body ? ': ' + ki.body : ''}`).join('\n')}`
     : ''
 
-  // Playbook is the primary training document — prepended so it's the first
-  // thing Claude sees after the baseline prompt.
-  const playbook = loadPlaybook()
-  const playbookBlock = playbook ? `\n\n# Playbook (editable — source of truth)\n${playbook}` : ''
+  // Structured playbook: main file (general rules) + category-specific file
+  // (detailed resolution steps and response templates for this issue type).
+  const mainPlaybook = loadMainPlaybook()
+  const categoryPlaybook = categoryFile !== 'index.md' ? loadPlaybookFile(categoryFile) : ''
+  const playbookBlock = mainPlaybook
+    ? `\n\n# Playbook — General Rules\n${mainPlaybook}${categoryPlaybook ? `\n\n# Playbook — ${categoryFile.replace('.md', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} (detailed)\n${categoryPlaybook}` : ''}`
+    : ''
 
   const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock
 
@@ -982,4 +1211,4 @@ async function handleClaudeConversation(
   return { sent: true, error: null }
 }
 
-export { normalizePhone as _normalizePhoneForWebhook, handleClaudeConversation, generateDriverReply }
+export { normalizePhone as _normalizePhoneForWebhook, handleClaudeConversation, generateDriverReply, selectCategoryPlaybook }

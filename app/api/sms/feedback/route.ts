@@ -22,10 +22,10 @@ export async function POST(req: NextRequest) {
   const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
   if (!isAdmin) return NextResponse.json({ error: 'Admin only' }, { status: 403 })
 
-  let body: { messageId?: string; rating?: 'up' | 'down' | null; note?: string }
+  let body: { messageId?: string; rating?: 'up' | 'down' | null; note?: string; category?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
-  const { messageId, rating, note } = body
+  const { messageId, rating, note, category } = body
   if (!messageId) return NextResponse.json({ error: 'messageId required' }, { status: 400 })
   if (rating !== null && rating !== 'up' && rating !== 'down') {
     return NextResponse.json({ error: 'rating must be up, down, or null' }, { status: 400 })
@@ -37,9 +37,17 @@ export async function POST(req: NextRequest) {
     claude_feedback_note: rating === 'down' ? (note?.trim() || null) : (note?.trim() || null),
     claude_feedback_at: rating === null ? null : new Date().toISOString(),
     claude_feedback_by: rating === null ? null : (user.email ?? null),
+    // Tag with the issue category at time of downvote for category-aware feedback loop
+    feedback_category: rating === 'down' ? (category?.trim() || null) : null,
   }
 
-  const { error } = await svc.from('sms_messages').update(update).eq('id', messageId)
+  let { error } = await svc.from('sms_messages').update(update).eq('id', messageId)
+  // Graceful fallback if migration 040 hasn't been applied yet
+  if (error && /feedback_category/i.test(error.message)) {
+    const { feedback_category, ...legacy } = update
+    const retry = await svc.from('sms_messages').update(legacy).eq('id', messageId)
+    error = retry.error
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ ok: true })
