@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { testAuth } from '@/lib/maas360'
+import { testAuth } from '@/lib/m360-service-client'
 
 export async function GET() {
   const supabase = await createClient()

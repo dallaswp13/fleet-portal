@@ -41,7 +41,15 @@ export default function InventoryView({
   const [addingCard, setAddingCard] = useState(false)
   const [executingCard, setExecutingCard] = useState<string | null>(null)
 
-  const items = initialItems
+  // Local state for items — enables optimistic updates without full page re-render
+  const [items, setItems] = useState(initialItems)
+  // Sync when server data changes (e.g. after modal save triggers router.refresh)
+  const [prevInitial, setPrevInitial] = useState(initialItems)
+  if (initialItems !== prevInitial) {
+    setItems(initialItems)
+    setPrevInitial(initialItems)
+  }
+
   const cards = initialCards
 
   const lowStock = useMemo(
@@ -59,7 +67,20 @@ export default function InventoryView({
 
   async function adjust(id: string, delta: number, field: 'new' | 'used' = 'new') {
     if (!canEdit) return
-    setBusyId(id)
+
+    // Optimistic update — instant UI feedback
+    setItems(prev => prev.map(item => {
+      if (item.id !== id) return item
+      const qtyField = field === 'used' ? 'quantity_used' : 'quantity_new'
+      const newVal = Math.max(0, item[qtyField] + delta)
+      return {
+        ...item,
+        [qtyField]: newVal,
+        quantity_on_hand: (field === 'new' ? newVal : item.quantity_new) + (field === 'used' ? newVal : item.quantity_used),
+      }
+    }))
+
+    // Fire API call in background — no need to block the UI
     try {
       const res = await fetch('/api/inventory', {
         method: 'PATCH',
@@ -69,11 +90,26 @@ export default function InventoryView({
       if (!res.ok) {
         const txt = await res.text().catch(() => '')
         toast.error('Adjust failed', { detail: txt.slice(0, 120) || `HTTP ${res.status}` })
+        // Revert optimistic update on failure
+        setItems(prev => prev.map(item => {
+          if (item.id !== id) return item
+          const qtyField = field === 'used' ? 'quantity_used' : 'quantity_new'
+          const revertVal = Math.max(0, item[qtyField] - delta)
+          return {
+            ...item,
+            [qtyField]: revertVal,
+            quantity_on_hand: (field === 'new' ? revertVal : item.quantity_new) + (field === 'used' ? revertVal : item.quantity_used),
+          }
+        }))
       } else {
-        startTransition(() => router.refresh())
+        // Apply server's authoritative values
+        const data = await res.json()
+        if (data.item) {
+          setItems(prev => prev.map(item => item.id === id ? { ...item, ...data.item } : item))
+        }
       }
-    } finally {
-      setBusyId(null)
+    } catch {
+      toast.error('Network error')
     }
   }
 
@@ -103,6 +139,25 @@ export default function InventoryView({
     if (!canEdit) return
     if (!window.confirm(`Execute "${cardName}"? This will subtract items from inventory.`)) return
     setExecutingCard(cardId)
+
+    // Optimistic update: subtract card line items from local state
+    const card = cards.find(c => c.id === cardId)
+    if (card) {
+      setItems(prev => prev.map(item => {
+        const lineItem = card.items.find(li => li.inventory_item_id === item.id)
+        if (!lineItem) return item
+        const sub = lineItem.quantity
+        const fromNew = Math.min(sub, item.quantity_new)
+        const fromUsed = Math.min(sub - fromNew, item.quantity_used)
+        return {
+          ...item,
+          quantity_new: item.quantity_new - fromNew,
+          quantity_used: item.quantity_used - fromUsed,
+          quantity_on_hand: item.quantity_on_hand - fromNew - fromUsed,
+        }
+      }))
+    }
+
     try {
       const res = await fetch('/api/inventory/actions', {
         method: 'PATCH',
@@ -112,9 +167,10 @@ export default function InventoryView({
       if (!res.ok) {
         const txt = await res.text().catch(() => '')
         toast.error('Execute failed', { detail: txt.slice(0, 120) || `HTTP ${res.status}` })
+        // Revert by re-fetching
+        startTransition(() => router.refresh())
       } else {
         toast.success(`"${cardName}" executed — inventory updated`)
-        startTransition(() => router.refresh())
       }
     } finally {
       setExecutingCard(null)
@@ -256,8 +312,8 @@ export default function InventoryView({
                     <div style={{ fontWeight: 600 }}>{i.name}</div>
                     {i.category && <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{i.category}</div>}
                   </td>
-                  <td><QtyCell value={i.quantity_new} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'new')} zeroDisable={i.quantity_new <= 0} /></td>
-                  <td><QtyCell value={i.quantity_used} canEdit={canEdit} busy={busyId === i.id || pending} onAdjust={delta => adjust(i.id, delta, 'used')} zeroDisable={i.quantity_used <= 0} /></td>
+                  <td><QtyCell value={i.quantity_new} canEdit={canEdit} busy={false} onAdjust={delta => adjust(i.id, delta, 'new')} zeroDisable={i.quantity_new <= 0} /></td>
+                  <td><QtyCell value={i.quantity_used} canEdit={canEdit} busy={false} onAdjust={delta => adjust(i.id, delta, 'used')} zeroDisable={i.quantity_used <= 0} /></td>
                   <td><span style={{ fontSize: 16, fontWeight: 700, color: isLow ? 'var(--amber)' : 'inherit' }}>{i.quantity_on_hand}</span></td>
                   <td style={{ fontSize: 12, color: 'var(--text2)' }}>{i.unit_cost != null ? `$${i.unit_cost.toFixed(2)}` : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
                   <td style={{ fontSize: 12, color: 'var(--text3)' }}>{i.low_stock_threshold == null ? <span>—</span> : `≤ ${i.low_stock_threshold}`}</td>

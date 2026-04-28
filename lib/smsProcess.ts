@@ -65,6 +65,15 @@ All other actions ("kiosk_enter", "kiosk_exit", "clear_dispatch", "clear_pim_bt"
 
 Confidence guidelines — be DECISIVE. If the driver's message clearly describes one of the two reboot scenarios (NoP/payment → reboot_pim, frozen/unresponsive tablet → reboot_driver), set confidence to "high" even if the wording is informal or in another language. Reserve "low" only for genuinely ambiguous messages where you truly cannot tell what the driver needs.
 
+If the driver attached a PHOTO, examine it carefully for:
+- Red/green status indicator lights: NOP (red = PIM down → reboot_pim), NOM (red = meter down → reboot_driver), AOK (green = healthy)
+- Error messages or dialog boxes on the tablet screen
+- Blank, dark, or frozen screens
+- The DriveMate dispatch app interface
+- The PIM payment screen in the back seat
+- Any visible cab number on the screen or dashboard
+Describe what you see in the "reason" field, then classify based on the visual evidence combined with any text message.
+
 Respond ONLY with valid JSON — no explanation, no markdown:
 {
   "action": "reboot_driver"|"reboot_pim"|"unknown",
@@ -72,7 +81,7 @@ Respond ONLY with valid JSON — no explanation, no markdown:
   "lease_number": "<5+ digit lease number if found, else empty>",
   "target": "driver"|"pim"|"unknown",
   "confidence": "high"|"medium"|"low",
-  "reason": "<brief explanation if not high confidence, else empty>",
+  "reason": "<brief explanation if not high confidence, else empty. If photo attached, describe what you see.>",
   "translated_text": "<English translation if message is NOT in English, else empty>",
   "source_language": "<detected language name if NOT English, else empty>"
 }`
@@ -115,7 +124,7 @@ interface Intent {
   source_language: string
 }
 
-async function parseWithClaude(smsText: string): Promise<Intent> {
+async function parseWithClaude(smsText: string, images?: FetchedImage[]): Promise<Intent> {
   const fallback: Intent = {
     action: 'unknown',
     vehicle_number: extractVehicleNumber(smsText),
@@ -129,6 +138,11 @@ async function parseWithClaude(smsText: string): Promise<Intent> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return fallback
   try {
+    // Build user message content — text only or text + images
+    const userContent = images && images.length > 0
+      ? buildContentWithImages(smsText, images)
+      : smsText
+
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -136,7 +150,7 @@ async function parseWithClaude(smsText: string): Promise<Intent> {
         model: 'claude-sonnet-4-20250514',
         max_tokens: 500,
         system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: smsText }],
+        messages: [{ role: 'user', content: userContent }],
       }),
     })
     const data = await res.json()
@@ -168,10 +182,79 @@ function renderTemplate(tmpl: string, vars: Record<string, string | null | undef
   })
 }
 
+interface MediaAttachment {
+  url: string
+  contentType: string
+}
+
 interface ProcessInput {
   messageId: string
   smsText: string
   senderPhone: string   // normalized 10-digit
+  mediaUrls?: MediaAttachment[]
+}
+
+// ── MMS Image Fetching ───────────────────────────────────────────────────────
+//
+// Twilio hosts MMS images at temporary URLs. We fetch them and convert to
+// base64 so they can be sent to Claude as vision content blocks. Claude can
+// then read tablet screens, error messages, indicator lights, etc.
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB — Claude's limit per image
+const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+interface FetchedImage {
+  base64: string
+  mediaType: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
+}
+
+async function fetchImageAsBase64(media: MediaAttachment): Promise<FetchedImage | null> {
+  if (!SUPPORTED_IMAGE_TYPES.has(media.contentType)) {
+    console.log(`[smsProcess] skipping non-image media: ${media.contentType}`)
+    return null
+  }
+  try {
+    const res = await fetch(media.url)
+    if (!res.ok) {
+      console.warn(`[smsProcess] failed to fetch media ${media.url}: HTTP ${res.status}`)
+      return null
+    }
+    const buffer = await res.arrayBuffer()
+    if (buffer.byteLength > MAX_IMAGE_SIZE) {
+      console.warn(`[smsProcess] media too large (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB), skipping`)
+      return null
+    }
+    const base64 = Buffer.from(buffer).toString('base64')
+    return {
+      base64,
+      mediaType: media.contentType as FetchedImage['mediaType'],
+    }
+  } catch (err) {
+    console.warn(`[smsProcess] error fetching media:`, err)
+    return null
+  }
+}
+
+/**
+ * Build Claude message content blocks from text + optional images.
+ * Returns the content array for the Anthropic API messages format.
+ */
+function buildContentWithImages(
+  text: string,
+  images: FetchedImage[],
+): Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> {
+  const content: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> = []
+
+  // Images first so Claude sees them before the text
+  for (const img of images) {
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+    })
+  }
+
+  content.push({ type: 'text', text: text || '[Driver sent a photo with no text]' })
+  return content
 }
 
 export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<{
@@ -219,6 +302,17 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   const ruleActions = ruleMatch?.actions ?? []
   const primaryAction = ruleActions.find(a => a !== 'auto_reply') ?? ruleActions[0] ?? null
 
+  // 1b. Fetch MMS images (if any) for Claude vision
+  //     Done early so both intent classification and conversation reply can use them.
+  const fetchedImages: FetchedImage[] = []
+  if (input.mediaUrls && input.mediaUrls.length > 0) {
+    const imageResults = await Promise.all(input.mediaUrls.map(m => fetchImageAsBase64(m)))
+    for (const img of imageResults) {
+      if (img) fetchedImages.push(img)
+    }
+    console.log(`[smsProcess] fetched ${fetchedImages.length}/${input.mediaUrls.length} MMS images for Claude vision`)
+  }
+
   // 2. Intent parsing — Claude-first architecture
   //
   // Always run Claude classification on every message. Then check rules as
@@ -226,7 +320,7 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   // the rule wins (it's a known correction). If they agree, Claude's fuller
   // context is used. This gives consistent classification for analytics plus
   // a mechanism to hard-override Claude when needed.
-  const claudeIntent = await parseWithClaude(smsText)
+  const claudeIntent = await parseWithClaude(smsText, fetchedImages.length > 0 ? fetchedImages : undefined)
   const claudeClassification = claudeIntent.action // always stored for analytics
 
   let intent: Intent
@@ -669,6 +763,7 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
         smsText,
         vehicleId,
         vehicleNumber: vehicleNum || null,
+        images: fetchedImages.length > 0 ? fetchedImages : undefined,
       })
       console.log('[smsProcess] claude conversation:', claudeResult)
     } catch (err) {
@@ -791,6 +886,15 @@ You are texting with a taxi driver who is having trouble with their in-vehicle e
 - Do NOT claim you have executed a reboot, kiosk command, or other M360 action — you cannot trigger those.
 - Do NOT make up information about driver accounts, payouts, lease fees, or dispatch. Say "I'll escalate this to the fleet team."
 - Do NOT send more than one SMS per reply. Keep replies under ~320 characters when possible so they fit in 2 SMS segments.
+
+# Photos / MMS
+Drivers frequently send photos of their tablet screens. If a photo is attached, examine it carefully:
+- Look for red/green indicator lights: NOP (red = PIM connection lost), NOM (red = meter disconnected), AOK (green = healthy)
+- Read any error messages, dialog boxes, or status text visible on screen
+- Note if the screen is blank, dark, frozen, or showing the wrong app
+- Look for any visible cab number on the screen or dashboard
+- If the photo is too blurry, has too much glare, or you can't make out the screen, ask the driver to describe what they see
+Use what you see in the photo combined with their text message to diagnose the issue. The photo is often more reliable than the driver's description.
 
 # Language
 If the driver's message is not English, reply in THEIR language. Do not send bilingual messages.
@@ -996,6 +1100,7 @@ async function generateDriverReply(
   svc: Svc,
   senderPhone: string,
   smsText: string,
+  images?: FetchedImage[],
 ): Promise<ClaudeReplyResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
@@ -1005,7 +1110,7 @@ async function generateDriverReply(
   // ── Classify the message first to select the right category playbook ──
   // We run a quick intent parse so we know which category file to load AND
   // which category's feedback to prioritize in the lessons.
-  const quickIntent = await parseWithClaude(smsText)
+  const quickIntent = await parseWithClaude(smsText, images)
   const categoryFile = selectCategoryPlaybook(quickIntent.action, smsText)
   const feedbackCategory = categoryFile.replace('.md', '') // e.g. 'pim-payment', 'meter'
 
@@ -1042,10 +1147,16 @@ async function generateDriverReply(
   const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock
 
   // Build message list from history, then append current user message.
-  const messages: { role: 'user' | 'assistant'; content: string }[] = history
+  // The current message may include images (MMS) — use vision content blocks.
+  const messages: { role: 'user' | 'assistant'; content: string | ReturnType<typeof buildContentWithImages> }[] = history
     .filter(h => h.content.trim().length > 0)
     .map(h => ({ role: h.role, content: h.content }))
-  messages.push({ role: 'user', content: smsText })
+
+  if (images && images.length > 0) {
+    messages.push({ role: 'user', content: buildContentWithImages(smsText, images) })
+  } else {
+    messages.push({ role: 'user', content: smsText })
+  }
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1106,9 +1217,10 @@ async function handleClaudeConversation(
     smsText: string
     vehicleId: string | null
     vehicleNumber: string | null
+    images?: FetchedImage[]
   },
 ): Promise<{ sent: boolean; error: string | null }> {
-  const { inboundId, senderPhone, smsText, vehicleId, vehicleNumber } = args
+  const { inboundId, senderPhone, smsText, vehicleId, vehicleNumber, images } = args
   if (!senderPhone || !isTwilioConfigured()) {
     await svc.from('sms_messages').update({ claude_status: 'skipped' }).eq('id', inboundId)
     return { sent: false, error: !senderPhone ? 'no_phone' : 'twilio_unconfigured' }
@@ -1130,7 +1242,7 @@ async function handleClaudeConversation(
   // Mark thinking so UI can show the indicator even if Claude is slow.
   await svc.from('sms_messages').update({ claude_status: 'thinking' }).eq('id', inboundId)
 
-  const result = await generateDriverReply(svc, senderPhone, smsText)
+  const result = await generateDriverReply(svc, senderPhone, smsText, images)
   if (!result.reply) {
     await svc.from('sms_messages').update({
       claude_status: 'failed',

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { searchDeviceByName } from '@/lib/maas360'
+import { searchDeviceByName } from '@/lib/m360-service-client'
 import { executeM360Action } from '@/lib/maas360Exec'
 
 export async function POST(req: NextRequest) {

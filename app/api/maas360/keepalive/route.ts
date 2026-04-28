@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { searchDeviceByName } from '@/lib/maas360'
+import { searchDeviceByName } from '@/lib/m360-service-client'
 
 export async function GET(req: NextRequest) {
   // Verify this request is from Vercel Cron (or a manual test with the secret)

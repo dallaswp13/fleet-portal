@@ -118,10 +118,20 @@ export async function POST(req: NextRequest) {
   const fromState  = formData.get('FromState')?.toString() ?? ''
   const numMedia   = parseInt(formData.get('NumMedia')?.toString() ?? '0', 10) || 0
 
-  console.log(`[twilio-webhook] inbound SMS from=${from} to=${to} sid=${sid} body="${body.slice(0, 80)}"`)
+  // Extract MMS media attachments (images, etc.)
+  // Twilio sends MediaUrl0, MediaContentType0, MediaUrl1, MediaContentType1, etc.
+  const mediaUrls: { url: string; contentType: string }[] = []
+  for (let i = 0; i < numMedia; i++) {
+    const url = formData.get(`MediaUrl${i}`)?.toString()
+    const contentType = formData.get(`MediaContentType${i}`)?.toString() ?? 'application/octet-stream'
+    if (url) mediaUrls.push({ url, contentType })
+  }
 
-  if (!from || !body) {
-    console.warn('[twilio-webhook] missing From or Body — ignoring', { from, bodyLength: body.length })
+  console.log(`[twilio-webhook] inbound SMS from=${from} to=${to} sid=${sid} body="${body.slice(0, 80)}" media=${mediaUrls.length}`)
+
+  // Allow through if there's a body OR media (MMS can be image-only with empty body)
+  if (!from || (!body && mediaUrls.length === 0)) {
+    console.warn('[twilio-webhook] missing From and no Body/Media — ignoring', { from, bodyLength: body.length, media: mediaUrls.length })
     return xmlResponse()
   }
 
@@ -155,13 +165,14 @@ export async function POST(req: NextRequest) {
     gmail_id: sid ? `twilio_${sid}` : `twilio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     sender: senderLabel,
     sender_phone: phoneNorm,
-    sms_text: body,
+    sms_text: body || (mediaUrls.length > 0 ? '[MMS — photo attached]' : ''),
     direction: 'inbound',
     source: 'twilio',
     twilio_sid: sid || null,
     recipient_phone: null,
     processed: false,
     claude_status: 'thinking',
+    media_urls: mediaUrls.length > 0 ? mediaUrls : null,
     received_at: new Date().toISOString(),
   }
 
@@ -172,9 +183,9 @@ export async function POST(req: NextRequest) {
     .single()
 
   // If migration 027 isn't applied, strip Twilio-only columns and retry
-  if (error && /direction|source|twilio_sid|recipient_phone|claude_status/i.test(error.message)) {
-    console.warn('[twilio-webhook] Twilio schema columns missing — retrying without them. Run migration 027 to enable.')
-    const { direction, source, twilio_sid, recipient_phone, claude_status, ...legacy } = fullRow
+  if (error && /direction|source|twilio_sid|recipient_phone|claude_status|media_urls/i.test(error.message)) {
+    console.warn('[twilio-webhook] Twilio schema columns missing — retrying without them. Run migrations to enable.')
+    const { direction, source, twilio_sid, recipient_phone, claude_status, media_urls, ...legacy } = fullRow
     const retry = await svc.from('sms_messages').insert(legacy).select('id').single()
     inserted = retry.data
     error = retry.error
@@ -208,8 +219,9 @@ export async function POST(req: NextRequest) {
       try {
         const result = await processInboundSms(svc, {
           messageId,
-          smsText: body,
+          smsText: body || '[MMS — photo attached]',
           senderPhone: phoneNorm,
+          mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
         })
         console.log(`[twilio-webhook] processed (async):`, result)
       } catch (err) {

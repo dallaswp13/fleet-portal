@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { writeAuditLog } from '@/lib/audit'
-import { createM360User, addUserToM360Group } from '@/lib/maas360'
+import { createM360User, addUserToM360Group } from '@/lib/m360-service-client'
 
 /**
  * Provisions two MaaS360 users for a newly created vehicle.

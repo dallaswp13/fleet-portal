@@ -163,7 +163,7 @@ export async function PATCH(req: NextRequest) {
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Audit log — quantity adjusted
+  // Audit log — fire-and-forget so we don't block the response
   writeAuditLog({
     userEmail,
     action: 'inventory_adjust',
@@ -172,7 +172,7 @@ export async function PATCH(req: NextRequest) {
     payload: { name: current.name, field: body.field ?? 'new', delta: body.delta, previous: currentVal, new_value: next },
     result: { quantity_new: data.quantity_new, quantity_used: data.quantity_used },
     success: true,
-  })
+  }).catch(() => {}) // swallow — audit failure shouldn't block inventory ops
 
   return NextResponse.json({ item: data })
 }

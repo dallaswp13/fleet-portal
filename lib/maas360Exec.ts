@@ -15,7 +15,7 @@ import { isClaudeExecuteActionsEnabled } from '@/lib/appSettings'
 import {
   rebootDevice, wipeDevice, enterKioskMode, exitKioskMode,
   clearAppData, clearDispatchApp, clearPimBluetooth, initiateSupport,
-} from '@/lib/maas360'
+} from '@/lib/m360-service-client'
 
 export type M360Caller = 'user' | 'claude'
 

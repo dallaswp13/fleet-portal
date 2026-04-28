@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getAuthToken } from '@/lib/maas360'
+import { getAuthToken } from '@/lib/m360-service-client'
 
 /**
  * GET /api/maas360/test-action?deviceId=xxx&execute=true
