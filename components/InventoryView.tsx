@@ -188,6 +188,21 @@ export default function InventoryView({
     else { toast.success('Card deleted'); startTransition(() => router.refresh()) }
   }
 
+  function exportPdf() {
+    const html = buildInventoryPrintHtml(items, lowStock, totalOnHand, totalValue)
+    const w = window.open('', '_blank', 'width=900,height=1100')
+    if (!w) {
+      toast.error('Popup blocked', { detail: 'Allow popups for this site to export.' })
+      return
+    }
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
+    // Trigger print after the page has rendered. We rely on the inline script
+    // in buildInventoryPrintHtml() to call print() on load — this is more
+    // reliable across browsers than calling w.print() from this window.
+  }
+
   return (
     <>
       {/* ── ACTION CARDS ──────────────────────────────────────── */}
@@ -264,11 +279,21 @@ export default function InventoryView({
         <div style={{ fontSize: 12, color: 'var(--text3)' }}>
           {canEdit ? 'Admin view — click +/− to adjust New or Used counts, or Edit to change fields.' : 'Read-only view.'}
         </div>
-        {canEdit && (
-          <button className="btn-primary btn-sm" onClick={() => setAdding(true)} disabled={pending}>
-            + Add item
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={exportPdf}
+            disabled={pending || items.length === 0}
+            title="Open a printable, single-page overview — use the print dialog's 'Save as PDF' option"
+          >
+            Export PDF
           </button>
-        )}
+          {canEdit && (
+            <button className="btn-primary btn-sm" onClick={() => setAdding(true)} disabled={pending}>
+              + Add item
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── INVENTORY TABLE ───────────────────────────────────── */}
@@ -534,4 +559,216 @@ function Field({ label, span = 1, children }: { label: string; span?: number; ch
       {children}
     </label>
   )
+}
+
+/**
+ * Build a self-contained printable HTML document for an inventory overview.
+ * Designed to fit a single Letter-size page with low-stock items emphasized.
+ * Auto-triggers print() after fonts load so the user lands on the browser's
+ * print dialog where they can pick "Save as PDF".
+ */
+function buildInventoryPrintHtml(
+  items: InventoryItem[],
+  lowStock: InventoryItem[],
+  totalOnHand: number,
+  totalValue: number,
+): string {
+  const esc = (s: unknown) =>
+    String(s ?? '').replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string),
+    )
+  const fmtMoney = (n: number) =>
+    `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const today = new Date().toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long', day: 'numeric',
+  })
+  const filename = `inventory-overview-${new Date().toISOString().slice(0, 10)}`
+
+  // Sort: low stock first (by severity), then everything else by name
+  const sorted = [...items].sort((a, b) => {
+    const aLow = a.low_stock_threshold != null && a.quantity_on_hand <= a.low_stock_threshold
+    const bLow = b.low_stock_threshold != null && b.quantity_on_hand <= b.low_stock_threshold
+    if (aLow && !bLow) return -1
+    if (!aLow && bLow) return 1
+    if (aLow && bLow) {
+      // Most critical (lowest absolute on-hand) first
+      return a.quantity_on_hand - b.quantity_on_hand
+    }
+    return a.name.localeCompare(b.name)
+  })
+
+  const rowsHtml = sorted.map(i => {
+    const isLow =
+      i.low_stock_threshold != null && i.quantity_on_hand <= i.low_stock_threshold
+    const vendor = i.vendor_company || i.vendor_name || ''
+    return `
+      <tr class="${isLow ? 'low' : ''}">
+        <td class="warn">${isLow ? '⚠' : ''}</td>
+        <td>
+          <div class="name">${esc(i.name)}</div>
+          ${i.category ? `<div class="cat">${esc(i.category)}</div>` : ''}
+        </td>
+        <td class="num">${i.quantity_new}</td>
+        <td class="num">${i.quantity_used}</td>
+        <td class="num bold ${isLow ? 'lowtxt' : ''}">${i.quantity_on_hand}</td>
+        <td class="num">${i.low_stock_threshold == null ? '—' : `≤ ${i.low_stock_threshold}`}</td>
+        <td class="num">${i.unit_cost != null ? `$${i.unit_cost.toFixed(2)}` : '—'}</td>
+        <td>${esc(i.location || '')}</td>
+        <td>${esc(vendor)}</td>
+      </tr>
+    `
+  }).join('')
+
+  const lowStockBanner = lowStock.length > 0
+    ? `
+      <div class="alert">
+        <div class="alert-title">⚠ Low stock — ${lowStock.length} item${lowStock.length === 1 ? '' : 's'} at or below threshold</div>
+        <div class="alert-body">
+          ${lowStock
+            .slice()
+            .sort((a, b) => a.quantity_on_hand - b.quantity_on_hand)
+            .map(i =>
+              `<span class="chip"><strong>${esc(i.name)}</strong> &middot; ${i.quantity_on_hand} on hand${
+                i.low_stock_threshold != null ? ` (≤ ${i.low_stock_threshold})` : ''
+              }</span>`,
+            ).join('')}
+        </div>
+      </div>
+    `
+    : `<div class="alert ok"><div class="alert-title">All items above low-stock threshold</div></div>`
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>${esc(filename)}</title>
+<style>
+  @page { size: letter; margin: 0.4in; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #111; background: #fff;
+    font-size: 10pt; line-height: 1.35;
+  }
+  .doc { padding: 4px 2px; }
+  header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    border-bottom: 2px solid #111; padding-bottom: 6px; margin-bottom: 10px;
+  }
+  header h1 { margin: 0; font-size: 18pt; letter-spacing: -0.01em; }
+  header .sub { font-size: 9pt; color: #555; }
+  header .meta { text-align: right; font-size: 9pt; color: #555; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    margin-bottom: 10px;
+  }
+  .stat {
+    border: 1px solid #ddd; border-left-width: 3px;
+    padding: 6px 8px; border-radius: 3px;
+  }
+  .stat .label { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.05em; color: #666; }
+  .stat .value { font-size: 16pt; font-weight: 700; margin-top: 2px; line-height: 1.05; }
+  .stat .sub   { font-size: 7.5pt; color: #888; }
+  .stat.blue   { border-left-color: #2563eb; }
+  .stat.green  { border-left-color: #16a34a; }
+  .stat.dark   { border-left-color: #111; }
+  .stat.amber  { border-left-color: #d97706; }
+  .stat.amber .value { color: #b45309; }
+
+  .alert {
+    border: 1px solid #f59e0b; border-left-width: 4px;
+    background: #fff7ed;
+    padding: 8px 10px; border-radius: 3px; margin-bottom: 10px;
+  }
+  .alert.ok { border-color: #cbd5e1; background: #f8fafc; border-left-color: #16a34a; }
+  .alert-title { font-weight: 700; font-size: 10pt; color: #b45309; margin-bottom: 4px; }
+  .alert.ok .alert-title { color: #166534; margin-bottom: 0; }
+  .alert-body { font-size: 9pt; color: #422006; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+  .chip { background: #fff; border: 1px solid #fcd9a5; padding: 2px 6px; border-radius: 10px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+  thead th {
+    text-align: left; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em;
+    color: #555; border-bottom: 1.5px solid #111; padding: 4px 6px; font-weight: 600;
+    background: #f8fafc;
+  }
+  tbody td { padding: 4px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+  tbody tr.low { background: #fff7ed; }
+  tbody tr.low td { border-bottom-color: #fcd9a5; }
+  td.warn { width: 14px; color: #b45309; font-weight: 700; text-align: center; }
+  td.num  { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.bold { font-weight: 700; }
+  td.lowtxt { color: #b45309; }
+  .name { font-weight: 600; }
+  .cat  { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.04em; color: #888; }
+
+  footer {
+    margin-top: 8px; padding-top: 6px; border-top: 1px solid #ddd;
+    font-size: 7.5pt; color: #888; display: flex; justify-content: space-between;
+  }
+
+  @media print {
+    .stat, .alert, table { break-inside: avoid; }
+    thead { display: table-header-group; }
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+  <header>
+    <div>
+      <h1>Inventory Overview</h1>
+      <div class="sub">Office supply counts — meters, cables, tablets, fuses, cases, mounts.</div>
+    </div>
+    <div class="meta">
+      <div><strong>${esc(today)}</strong></div>
+      <div>LA Yellow Cab · Fleet Portal</div>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat blue"><div class="label">Item types</div><div class="value">${items.length}</div><div class="sub">distinct SKUs</div></div>
+    <div class="stat green"><div class="label">Total on hand</div><div class="value">${totalOnHand.toLocaleString()}</div><div class="sub">new + used</div></div>
+    <div class="stat dark"><div class="label">Total value</div><div class="value">${fmtMoney(totalValue)}</div><div class="sub">on-hand × unit cost</div></div>
+    <div class="stat amber"><div class="label">Low stock</div><div class="value">${lowStock.length}</div><div class="sub">at/below threshold</div></div>
+  </div>
+
+  ${lowStockBanner}
+
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Item</th>
+        <th style="text-align:right">New</th>
+        <th style="text-align:right">Used</th>
+        <th style="text-align:right">On Hand</th>
+        <th style="text-align:right">Threshold</th>
+        <th style="text-align:right">Unit $</th>
+        <th>Location</th>
+        <th>Vendor</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml || `<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">No inventory items.</td></tr>`}
+    </tbody>
+  </table>
+
+  <footer>
+    <span>Generated ${esc(today)} from Fleet Portal · Low-stock items highlighted in amber</span>
+    <span>${items.length} item${items.length === 1 ? '' : 's'}</span>
+  </footer>
+</div>
+<script>
+  // Set the suggested filename for "Save as PDF"
+  document.title = ${JSON.stringify(filename)};
+  // Auto-open the print dialog once the page has painted.
+  window.addEventListener('load', function () {
+    setTimeout(function () { window.focus(); window.print(); }, 150);
+  });
+</script>
+</body>
+</html>`
 }
