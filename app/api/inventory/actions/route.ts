@@ -140,34 +140,79 @@ export async function PATCH(req: NextRequest) {
     .in('id', itemIds)
   const itemMap = new Map((itemRows ?? []).map(i => [i.id, i]))
 
-  // Subtract from inventory (quantity_new first, overflow to quantity_used)
-  const changes: { name: string; qty_before: number; qty_after: number; subtracted: number }[] = []
+  // Subtract from inventory (quantity_new first, overflow to quantity_used).
+  // Track changes + warnings so the caller can show exactly what happened —
+  // silent skips were hiding cases like a stale line item pointing at a
+  // deleted inventory row, which made the "OBD Meter not deducting" issue
+  // look like a logic bug when it was actually a missing/orphaned line item.
+  const changes: {
+    name: string
+    inventory_item_id: string
+    requested: number
+    from_new: number
+    from_used: number
+    qty_new_before: number
+    qty_used_before: number
+    qty_new_after: number
+    qty_used_after: number
+    short_by: number
+  }[] = []
+  const warnings: string[] = []
   for (const li of lineItems) {
     const item = itemMap.get(li.inventory_item_id)
-    if (!item) continue
+    if (!item) {
+      warnings.push(
+        `Line item links to inventory id ${li.inventory_item_id} which no longer exists — skipped. ` +
+        `Open the action card and re-attach the missing item.`,
+      )
+      continue
+    }
 
-    const qtyBefore = item.quantity_new + item.quantity_used
     let toSubtract = li.quantity
-    let newQty = item.quantity_new
-    let usedQty = item.quantity_used
+    const newBefore = item.quantity_new
+    const usedBefore = item.quantity_used
 
     // Take from new first
-    const fromNew = Math.min(toSubtract, newQty)
-    newQty -= fromNew
+    const fromNew = Math.min(toSubtract, newBefore)
     toSubtract -= fromNew
+    const newAfter = newBefore - fromNew
 
     // Then from used
-    const fromUsed = Math.min(toSubtract, usedQty)
-    usedQty -= fromUsed
+    const fromUsed = Math.min(toSubtract, usedBefore)
+    toSubtract -= fromUsed
+    const usedAfter = usedBefore - fromUsed
 
-    await svc.from('inventory_items').update({
-      quantity_new: newQty,
-      quantity_used: usedQty,
+    if (toSubtract > 0) {
+      warnings.push(
+        `${item.name}: requested ${li.quantity} but only ${fromNew + fromUsed} on hand ` +
+        `(short by ${toSubtract}). Inventory clamped to 0.`,
+      )
+    }
+
+    const { error: updErr } = await svc.from('inventory_items').update({
+      quantity_new: newAfter,
+      quantity_used: usedAfter,
       updated_by: auth.user!.email ?? auth.user!.id,
       updated_at: new Date().toISOString(),
     }).eq('id', li.inventory_item_id)
 
-    changes.push({ name: item.name, qty_before: qtyBefore, qty_after: newQty + usedQty, subtracted: li.quantity })
+    if (updErr) {
+      warnings.push(`${item.name}: update failed — ${updErr.message}`)
+      continue
+    }
+
+    changes.push({
+      name: item.name,
+      inventory_item_id: li.inventory_item_id,
+      requested: li.quantity,
+      from_new: fromNew,
+      from_used: fromUsed,
+      qty_new_before: newBefore,
+      qty_used_before: usedBefore,
+      qty_new_after: newAfter,
+      qty_used_after: usedAfter,
+      short_by: toSubtract,
+    })
   }
 
   // Audit log — card executed with full before/after detail
@@ -179,14 +224,51 @@ export async function PATCH(req: NextRequest) {
     action: 'inventory_card_execute',
     targetType: 'inventory',
     targetId: body.card_id,
-    payload: { card_name: cardInfo?.name ?? 'unknown', changes },
-    result: { total_items_affected: changes.length },
+    payload: { card_name: cardInfo?.name ?? 'unknown', changes, warnings },
+    result: { total_items_affected: changes.length, warnings_count: warnings.length },
     success: true,
   })
 
-  const results = changes.map(c => ({ item_id: '', subtracted: c.subtracted, remaining: c.qty_after }))
+  return NextResponse.json({ ok: true, changes, warnings })
+}
 
-  return NextResponse.json({ ok: true, results })
+export async function DELETE(req: NextRequest) {
+  const auth = await requireAdmin()
+  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status })
+
+  let body: { id?: string }
+  try { body = await req.json() }
+  catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+
+  if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+
+  const svc = await createServiceClient()
+
+  // Fetch name for audit
+  const { data: cardInfo } = await svc.from('inventory_action_cards')
+    .select('name').eq('id', body.id).single()
+
+  const { error } = await svc.from('inventory_action_cards').delete().eq('id', body.id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Audit log — card deleted
+  writeAuditLog({
+    userEmail: auth.user!.email ?? auth.user!.id,
+    action: 'inventory_card_delete',
+    targetType: 'inventory',
+    targetId: body.id,
+    payload: { card_name: cardInfo?.name ?? 'unknown' },
+    result: null,
+    success: true,
+  })
+
+  return NextResponse.json({ ok: true })
+}
+    result: { total_items_affected: changes.length, warnings_count: warnings.length },
+    success: true,
+  })
+
+  return NextResponse.json({ ok: true, changes, warnings })
 }
 
 export async function DELETE(req: NextRequest) {
