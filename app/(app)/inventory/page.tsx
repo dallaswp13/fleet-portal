@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
-import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { createServiceClient } from '@/lib/supabase/server'
 import InventoryView, { type InventoryItem, type ActionCard } from '@/components/InventoryView'
+import { getCachedUser, getCachedIsAdmin } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,45 +15,34 @@ export const dynamic = 'force-dynamic'
  * Backed by `inventory_items` (035) + `inventory_action_cards` / `_items` (036).
  */
 export default async function InventoryPage() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  // Service client doesn't need awaiting (it's synchronous), and we run the
+  // auth check + admin lookup + the three data queries together so the page
+  // is bottlenecked on the slowest single round trip rather than the sum.
+  const svc = createServiceClient()
+  const itemsQuery = svc.from('inventory_items')
+    .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true })
+    .limit(500)
+  const cardsQuery = svc.from('inventory_action_cards').select('*').order('sort_order').order('name').limit(200)
+  const lineQuery  = svc.from('inventory_action_card_items').select('id, card_id, inventory_item_id, quantity').limit(2000)
 
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single()
-  const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
-
-  const svc = await createServiceClient()
-
-  // Fetch inventory items, action cards, and line items all in parallel
   let cards: ActionCard[] = []
   let itemsResult: { data: unknown[] | null; error?: { message: string } | null }
   let cardsResult: { data: unknown[] | null } = { data: null }
   let lineResult: { data: unknown[] | null } = { data: null }
-  try {
-    const [ir, cr, lr] = await Promise.all([
-      svc.from('inventory_items')
-        .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
-        .order('sort_order', { ascending: true })
-        .order('name', { ascending: true })
-        .limit(500),
-      svc.from('inventory_action_cards').select('*').order('sort_order').order('name').limit(200),
-      svc.from('inventory_action_card_items').select('id, card_id, inventory_item_id, quantity').limit(2000),
-    ])
-    itemsResult = ir
-    cardsResult = cr
-    lineResult = lr
-  } catch {
-    // Migration 036 may not have been run yet — gracefully degrade
-    itemsResult = await svc.from('inventory_items')
-      .select('id, name, category, quantity_new, quantity_used, quantity_on_hand, low_stock_threshold, location, notes, sort_order, updated_at, updated_by, vendor_name, vendor_company, vendor_email, unit_cost')
-      .order('sort_order', { ascending: true })
-      .order('name', { ascending: true })
-      .limit(500)
-  }
+
+  const [user, isAdmin, ir, cr, lr] = await Promise.all([
+    getCachedUser(),
+    getCachedIsAdmin(),
+    itemsQuery,
+    cardsQuery.then(r => r, () => ({ data: null })),
+    lineQuery.then(r => r, () => ({ data: null })),
+  ])
+  if (!user) redirect('/login')
+  itemsResult = ir
+  cardsResult = cr as { data: unknown[] | null }
+  lineResult  = lr as { data: unknown[] | null }
 
   const items: InventoryItem[] = (itemsResult.data ?? []) as InventoryItem[]
 

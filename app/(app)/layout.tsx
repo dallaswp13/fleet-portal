@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
 import Sidebar from '@/components/Sidebar'
 import ThemeToggle from '@/components/ThemeToggle'
 import ClaudeSupportToggle from '@/components/ClaudeSupportToggle'
@@ -9,18 +8,17 @@ import BalanceIndicator from '@/components/BalanceIndicator'
 import { Suspense } from 'react'
 import OfficeFilter from '@/components/OfficeFilter'
 import { OFFICES, type Office } from '@/lib/filters'
+import { getCachedUser, getCachedProfile, getCachedIsAdmin } from '@/lib/auth'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  // Run user, profile, and admin checks in parallel — they share a single
+  // network round-trip thanks to React's cache() in lib/auth.ts.
+  const [user, profile, isAdmin] = await Promise.all([
+    getCachedUser(),
+    getCachedProfile(),
+    getCachedIsAdmin(),
+  ])
   if (!user) redirect('/login')
-
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('is_admin, offices')
-    .eq('id', user.id)
-    .single()
-  const isAdmin = profile?.is_admin === true || user.email === (process.env.ADMIN_EMAIL ?? '')
 
   // Which offices this user is allowed to see — passed to OfficeFilter so it
   // only renders pills for their permitted offices.
@@ -31,7 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       ? []
       : profile.offices === null
         ? []
-        : (profile.offices as string[]).filter((o): o is Office => OFFICES.includes(o as Office))
+        : (profile.offices).filter((o): o is Office => OFFICES.includes(o as Office))
 
   return (
     <div className="app-shell">
