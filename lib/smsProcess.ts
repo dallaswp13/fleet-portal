@@ -18,6 +18,7 @@ import { join } from 'path'
 import { sendSms, isTwilioConfigured, getTwilioNumber, getMessagingServiceSid } from '@/lib/twilio'
 import { ASC_FLEETS } from '@/lib/filters'
 import { executeM360Action, isClaudeAllowedAction, type ExecM360Result } from '@/lib/maas360Exec'
+import { sendEscalationEmail } from '@/lib/email'
 
 /**
  * Map the SMS-facing `intent.action` (e.g. 'reboot_pim') onto the M360 API
@@ -36,6 +37,19 @@ function resolveM360Action(smsAction: string): { m360Action: string; isPim: bool
     // clear_pim_bt, clear_dispatch, kiosk_enter, kiosk_exit, support_* are
     // intentionally unmapped — not yet configured in the portal.
     default:              return null
+  }
+}
+
+/**
+ * Friendly label for the M360 action footnote rendered under the outbound
+ * bot reply in the inbox UI (e.g. "PIM Reboot: ✓ Success"). Keep concise.
+ */
+function humanizeM360Action(m360Action: string, isPim: boolean): string {
+  switch (m360Action) {
+    case 'reboot':         return isPim ? 'PIM Reboot' : 'Driver Tablet Reboot'
+    case 'clear_dispatch': return 'Clear Dispatch App'
+    case 'clear_pim_bt':   return 'Clear PIM Bluetooth'
+    default:               return (isPim ? 'PIM ' : 'Driver ') + m360Action.replace(/_/g, ' ')
   }
 }
 
@@ -565,6 +579,9 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   let autoReplySent = false
   let autoReplyError: string | null = null
   let autoReplyBody: string | null = null
+  // ID of the outbound auto_reply row, so step 4b can stamp the M360 outcome
+  // onto the same row for the inbox footnote.
+  let autoReplyRowId: string | null = null
 
   if (ruleMatch && ruleActions.includes('auto_reply') && ruleMatch.reply_text && senderPhone && isTwilioConfigured()) {
     const body = renderTemplate(ruleMatch.reply_text, {
@@ -598,13 +615,16 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
       result: sendResult.success ? `Auto-reply sent (rule: ${ruleMatch.name})` : `Auto-reply failed: ${sendResult.error}`,
       received_at: new Date().toISOString(),
     }
-    let { error: outErr } = await svc.from('sms_messages').insert(outboundRow)
+    let { data: insertedReply, error: outErr } = await svc
+      .from('sms_messages').insert(outboundRow).select('id').single()
     if (outErr && /direction|source|twilio_sid|recipient_phone/i.test(outErr.message)) {
       const { direction, source, twilio_sid, recipient_phone, ...legacy } = outboundRow
-      const retry = await svc.from('sms_messages').insert(legacy)
+      const retry = await svc.from('sms_messages').insert(legacy).select('id').single()
+      insertedReply = retry.data
       outErr = retry.error
     }
     if (outErr) console.error('[smsProcess] failed to insert outbound reply row:', outErr.message)
+    if (insertedReply?.id) autoReplyRowId = insertedReply.id
   }
 
   // 4b. Claude auto-execution of the rule's M360 action.
@@ -622,6 +642,9 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   let m360Outcome: 'executed' | 'failed' | 'blocked' | 'skipped' | null = null
   let m360Detail: string | null = null
   let m360Success = false
+  // Friendly label like "PIM Reboot" — set only when the action was actually
+  // attempted (executed/failed). Used by the inbox UI footnote.
+  let m360ActionLabel: string | null = null
   if (ruleMatch && primaryAction) {
     const mapping = resolveM360Action(primaryAction)
     if (mapping && isClaudeAllowedAction(mapping.m360Action)) {
@@ -668,8 +691,27 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
             m360Outcome = 'failed'
             m360Detail  = execResult.message || 'M360 call failed'
           }
+          // Capture friendly label for the inbox footnote — only when the
+          // action actually went to MaaS360 (executed or failed), not when
+          // skipped or blocked.
+          if (m360Outcome === 'executed' || m360Outcome === 'failed') {
+            m360ActionLabel = humanizeM360Action(mapping.m360Action, mapping.isPim)
+          }
         }
       }
+    }
+  }
+
+  // Stamp the M360 outcome onto the outbound bot reply row so the inbox UI
+  // can render "PIM Reboot: ✓ Success" as a footnote under the bubble.
+  if (autoReplyRowId && m360ActionLabel) {
+    const { error: m360UpdErr } = await svc.from('sms_messages')
+      .update({ m360_action_label: m360ActionLabel, m360_action_success: m360Success })
+      .eq('id', autoReplyRowId)
+    if (m360UpdErr && /m360_action/i.test(m360UpdErr.message)) {
+      console.warn('[smsProcess] m360_action_* columns missing — run migration 046')
+    } else if (m360UpdErr) {
+      console.error('[smsProcess] failed to stamp m360 outcome on outbound row:', m360UpdErr.message)
     }
   }
 
@@ -1295,6 +1337,56 @@ async function handleClaudeConversation(
     outErr = retry.error
   }
   if (outErr) console.error('[smsProcess] failed to insert Claude outbound row:', outErr.message)
+
+  // If Claude flagged this exchange as needing human follow-up, email Dallas
+  // with the full conversation context so he can take it from here. Fire and
+  // forget — never block the SMS pipeline on email delivery.
+  if (result.needsHuman) {
+    try {
+      const { data: threadRows } = await svc
+        .from('sms_messages')
+        .select('direction, sms_text, translated_text, received_at, is_claude_reply')
+        .or(`sender_phone.eq.${senderPhone},recipient_phone.eq.${senderPhone}`)
+        .order('received_at', { ascending: true })
+        .limit(50)
+
+      const { data: driverRow } = await svc
+        .from('drivers')
+        .select('name')
+        .eq('personal_phone_norm', senderPhone)
+        .limit(1)
+        .maybeSingle()
+
+      type ConvRole = 'driver' | 'bot' | 'admin'
+      const conversation = (threadRows ?? []).map(r => {
+        const row = r as {
+          direction: 'inbound' | 'outbound' | null
+          sms_text: string | null
+          translated_text: string | null
+          received_at: string
+          is_claude_reply: boolean | null
+        }
+        const role: ConvRole = row.direction === 'outbound'
+          ? (row.is_claude_reply ? 'bot' : 'admin')
+          : 'driver'
+        return {
+          role,
+          text: row.translated_text || row.sms_text || '',
+          at: row.received_at,
+        }
+      })
+
+      void sendEscalationEmail({
+        driverPhone: senderPhone,
+        vehicleNumber: vehicleNumber,
+        driverName: (driverRow as { name?: string | null } | null)?.name ?? null,
+        conversation,
+        reason: result.reason || 'Claude flagged this conversation for human follow-up.',
+      }).catch(err => console.error('[smsProcess] escalation email failed:', err))
+    } catch (err) {
+      console.error('[smsProcess] escalation email prep failed:', err)
+    }
+  }
 
   // If Claude flagged this as a known-issue reply, log a note in the Rylo Tracker
   // with the cab number so Shan and the ops team have a trail.

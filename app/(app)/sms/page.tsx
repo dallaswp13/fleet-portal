@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ASC_FLEETS } from '@/lib/filters'
@@ -36,6 +36,11 @@ interface SmsMessage {
   rule_override: string | null
   feedback_category: string | null
   media_urls: { url: string; contentType: string }[] | null
+  // M360 action outcome stamped onto outbound bot replies when an M360
+  // command fired in the same exchange (migration 046). NULL for messages
+  // without an associated action.
+  m360_action_label: string | null
+  m360_action_success: boolean | null
 }
 
 interface SmsRule {
@@ -713,22 +718,22 @@ export default function SmsPage() {
                 onMouseEnter={e => (e.currentTarget.style.background = selectedConversation === conv.phone ? 'var(--bg3)' : 'var(--bg3)')}
                 onMouseLeave={e => (e.currentTarget.style.background = selectedConversation === conv.phone ? 'var(--bg3)' : 'transparent')}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600 }}>
-                    {formatPhone(conv.phone)}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: conv.vehicleMatch ? 'var(--blue)' : 'var(--text)' }}>
+                    {conv.vehicleMatch ? `Cab #${conv.vehicleMatch}` : formatPhone(conv.phone)}
                   </div>
                   <div style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap', marginLeft: 8 }}>
                     {new Date(conv.lastMessage.received_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
+                {conv.vehicleMatch && (
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>
+                    {formatPhone(conv.phone)}
+                  </div>
+                )}
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3, display: 'flex', gap: 6, alignItems: 'center' }}>
                   {conv.displayName && <span>{conv.displayName}</span>}
-                  {conv.vehicleMatch && (
-                    <span style={{ color: 'var(--blue)', fontWeight: 500 }}>
-                      vehicle #{conv.vehicleMatch}
-                    </span>
-                  )}
-                  {!conv.displayName && !conv.vehicleMatch && <span>{conv.messageCount} messages</span>}
+                  {!conv.displayName && <span>{conv.messageCount} messages</span>}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {conv.lastMessage.translated_text || conv.lastMessage.sms_text}
@@ -746,19 +751,18 @@ export default function SmsPage() {
             {/* Conversation Header */}
             <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', background: 'var(--bg2)' }}>
               <div style={{ marginBottom: 12 }}>
-                <h2 style={{ margin: '0 0 4px 0', fontSize: 16 }}>
-                  {formatPhone(selectedConv.phone)}
+                <h2 style={{ margin: '0 0 4px 0', fontSize: 18, color: selectedConv.vehicleMatch ? 'var(--blue)' : 'var(--text)' }}>
+                  {selectedConv.vehicleMatch ? `Cab #${selectedConv.vehicleMatch}` : formatPhone(selectedConv.phone)}
                 </h2>
+                {selectedConv.vehicleMatch && (
+                  <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                    {formatPhone(selectedConv.phone)}
+                  </div>
+                )}
                 <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   {selectedConv.displayName && <span>{selectedConv.displayName}</span>}
                   {selectedConv.displayName && <span>·</span>}
                   <span>{selectedConv.messageCount} messages</span>
-                  {selectedConv.vehicleMatch && (
-                    <>
-                      <span>·</span>
-                      <span style={{ color: 'var(--blue)', fontWeight: 500 }}>vehicle #{selectedConv.vehicleMatch}</span>
-                    </>
-                  )}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -774,10 +778,26 @@ export default function SmsPage() {
 
             {/* Message Thread */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {conversationMessages.map(msg => {
+              {conversationMessages.map((msg, idx) => {
                 const isOutbound = msg.direction === 'outbound'
                 const isClaudeReply = isOutbound && (msg.is_claude_reply === true || msg.action === 'claude_reply')
                 const isAutoReply = isOutbound && msg.action === 'auto_reply' && !isClaudeReply
+                // Date divider: insert before the first message of each day
+                // in the thread (iMessage/Slack style).
+                const prevMsg = idx > 0 ? conversationMessages[idx - 1] : null
+                const msgDate = new Date(msg.received_at)
+                const startsNewDay = !prevMsg || new Date(prevMsg.received_at).toDateString() !== msgDate.toDateString()
+                const dividerLabel = (() => {
+                  const today = new Date(); today.setHours(0, 0, 0, 0)
+                  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
+                  const d = new Date(msgDate); d.setHours(0, 0, 0, 0)
+                  if (d.getTime() === today.getTime())     return 'Today'
+                  if (d.getTime() === yesterday.getTime()) return 'Yesterday'
+                  if (d.getFullYear() === today.getFullYear()) {
+                    return msgDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+                  }
+                  return msgDate.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+                })()
                 // Outbound from Dallas: blue, auto-reply: teal/green, Claude: purple/violet, inbound: distinct card
                 const bubbleBg = isClaudeReply
                   ? 'linear-gradient(135deg, #7c3aed, #a855f7)'
@@ -791,12 +811,22 @@ export default function SmsPage() {
                 const bubbleShadow = isOutbound ? 'none' : '0 1px 3px rgba(0,0,0,0.08)'
 
                 return (
-                <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isOutbound ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
-                  {/* Sender label for inbound messages */}
+                <Fragment key={msg.id}>
+                  {startsNewDay && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '6px 0 2px 0' }}>
+                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                        {dividerLabel}
+                      </div>
+                      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                    </div>
+                  )}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: isOutbound ? 'flex-end' : 'flex-start', marginBottom: 8 }}>
+                  {/* Sender label for inbound messages — phone only; city
+                      (from Twilio FromCity) was noise so we omit it. */}
                   {!isOutbound && (
                     <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text3)', marginBottom: 2, marginLeft: 4 }}>
                       {formatPhone(msg.sender_phone || '')}
-                      {msg.sender && <span style={{ fontWeight: 400, marginLeft: 4 }}>· {msg.sender}</span>}
                     </div>
                   )}
                   {isAutoReply && (
@@ -879,6 +909,17 @@ export default function SmsPage() {
                       {msg.result}
                     </div>
                   )}
+                  {/* M360 action footnote — surfaces the result of any MaaS360
+                      command fired in the same exchange (e.g. "PIM Reboot:
+                      ✓ Success") right beneath the bot's reply bubble. */}
+                  {(isClaudeReply || isAutoReply) && msg.m360_action_label && (
+                    <div style={{ fontSize: 10, marginTop: 4, marginRight: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ fontWeight: 600, color: 'var(--text3)' }}>{msg.m360_action_label}:</span>
+                      {msg.m360_action_success
+                        ? <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ Success</span>
+                        : <span style={{ color: '#dc2626', fontWeight: 600 }}>✗ Failure</span>}
+                    </div>
+                  )}
                   {/* Claude feedback buttons — shown only on Claude's outbound replies */}
                   {isClaudeReply && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginRight: 4 }}>
@@ -954,6 +995,7 @@ export default function SmsPage() {
                     </div>
                   )}
                 </div>
+                </Fragment>
                 )
               })}
               {/* Claude thinking indicator — shown when the latest inbound row
