@@ -41,6 +41,9 @@ interface SmsMessage {
   // without an associated action.
   m360_action_label: string | null
   m360_action_success: boolean | null
+  // Unread tracking (migration 047). NULL = unread; populated when the
+  // conversation is opened in the inbox. Only meaningful for inbound rows.
+  read_at: string | null
 }
 
 interface SmsRule {
@@ -149,11 +152,15 @@ function VehicleSearch({ vehicles, value, onChange }: {
 
 interface Conversation {
   phone: string
-  displayName: string | null   // city/state from Twilio (secondary context)
+  // displayName was the Twilio City/State; no longer displayed but kept on
+  // the type for the search filter (matches against it harmlessly when null).
+  displayName: string | null
   vehicleMatch: string | null  // vehicle number from resolved messages
   lastMessage: SmsMessage
   messageCount: number
   unprocessedCount: number
+  // Count of unread inbound messages — drives the conv-list dot indicator.
+  unreadCount: number
 }
 
 export default function SmsPage() {
@@ -177,6 +184,10 @@ export default function SmsPage() {
   const [showRules, setShowRules] = useState(false)
   const [showNewRule, setShowNewRule] = useState(false)
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
+  // Ref mirror of selectedConversation so the Realtime INSERT handler (set
+  // up once in a useEffect with empty deps) can read the current value
+  // without re-subscribing every time the user clicks a different thread.
+  const selectedConversationRef = useRef<string | null>(null)
   const [conversationMessages, setConversationMessages] = useState<SmsMessage[]>([])
   const [replyText, setReplyText] = useState('')
   const [sendingReply, setSendingReply] = useState(false)
@@ -242,6 +253,15 @@ export default function SmsPage() {
           if (prev.some(m => m.id === row.id)) return prev
           return [row, ...prev].slice(0, 500)
         })
+        // If this inbound just arrived in the conversation that's currently
+        // open on screen, mark it read immediately so the unread dot doesn't
+        // briefly flash on. Uses the ref so we see the live value, not the
+        // stale closure captured when this subscription was set up.
+        if (row.direction === 'inbound' && row.sender_phone && normalizePhone(row.sender_phone) === selectedConversationRef.current) {
+          const now = new Date().toISOString()
+          setMessages(prev => prev.map(m => m.id === row.id ? { ...m, read_at: now } : m))
+          void markAsRead([row.id])
+        }
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sms_messages' }, (payload) => {
         const updated = normalize(payload.new as Record<string, unknown>)
@@ -277,6 +297,36 @@ export default function SmsPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conversationMessages])
+
+  // Keep the ref in sync so the Realtime handler always sees the current
+  // selected conversation when deciding whether to mark a new inbound read.
+  useEffect(() => {
+    selectedConversationRef.current = selectedConversation
+  }, [selectedConversation])
+
+  /**
+   * Mark the given inbound message rows as read in Supabase. Used by
+   * loadConversation (bulk) and the Realtime INSERT handler (single id when
+   * a new message arrives in the currently-open thread).
+   *
+   * Callers should also optimistically setMessages so the unread dot
+   * disappears instantly; this function only updates the DB. Failures are
+   * logged but never surfaced to the user — worst case the dot reappears
+   * after the next loadMessages.
+   */
+  async function markAsRead(ids: string[]) {
+    if (!ids.length) return
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('sms_messages')
+      .update({ read_at: new Date().toISOString() })
+      .in('id', ids)
+    if (error && /read_at/i.test(error.message)) {
+      console.warn('[inbox] read_at column missing — run migration 047')
+    } else if (error) {
+      console.error('[inbox] failed to mark as read:', error.message)
+    }
+  }
 
   // Refresh conversation view when messages state updates
   useEffect(() => {
@@ -355,6 +405,8 @@ export default function SmsPage() {
         ?.sender ?? null
       // Find the most recent vehicle number from any message in the thread
       const vehicleMatch = data.messages.find(m => m.vehicle_number)?.vehicle_number ?? null
+      // Count unread inbound messages — drives the unread dot in conv list.
+      const unreadCount = data.messages.filter(m => m.direction === 'inbound' && !m.read_at).length
       return {
         phone,
         displayName: inboundSender,
@@ -362,6 +414,7 @@ export default function SmsPage() {
         lastMessage,
         messageCount: data.messages.length,
         unprocessedCount,
+        unreadCount,
       }
     })
 
@@ -377,6 +430,18 @@ export default function SmsPage() {
     setConversationMessages(convMessages)
     setReplyText('')
     setAssignVeh(convMessages[0]?.vehicle_id ?? '')
+
+    // Mark every unread inbound message for this phone as read. Optimistic
+    // local update so the unread dot disappears immediately; the DB write
+    // and Realtime echo follow asynchronously.
+    const unreadIds = messages
+      .filter(m => m.direction === 'inbound' && !m.read_at && normalizePhone(m.sender_phone) === phone)
+      .map(m => m.id)
+    if (unreadIds.length > 0) {
+      const now = new Date().toISOString()
+      setMessages(prev => prev.map(m => unreadIds.includes(m.id) ? { ...m, read_at: now } : m))
+      void markAsRead(unreadIds)
+    }
   }
 
   async function sendReply() {
@@ -719,10 +784,21 @@ export default function SmsPage() {
                 onMouseLeave={e => (e.currentTarget.style.background = selectedConversation === conv.phone ? 'var(--bg3)' : 'transparent')}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: conv.vehicleMatch ? 'var(--blue)' : 'var(--text)' }}>
-                    {conv.vehicleMatch ? `Cab #${conv.vehicleMatch}` : formatPhone(conv.phone)}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    {conv.unreadCount > 0 && (
+                      <span
+                        title={`${conv.unreadCount} unread`}
+                        style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          background: 'var(--blue)', flexShrink: 0,
+                        }}
+                      />
+                    )}
+                    <div style={{ fontSize: 13, fontWeight: 700, color: conv.vehicleMatch ? 'var(--blue)' : 'var(--text)' }}>
+                      {conv.vehicleMatch ? `Cab #${conv.vehicleMatch}` : formatPhone(conv.phone)}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap', marginLeft: 8 }}>
+                  <div style={{ fontSize: 10, color: conv.unreadCount > 0 ? 'var(--blue)' : 'var(--text3)', fontWeight: conv.unreadCount > 0 ? 600 : 400, whiteSpace: 'nowrap', marginLeft: 8 }}>
                     {new Date(conv.lastMessage.received_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
@@ -731,11 +807,15 @@ export default function SmsPage() {
                     {formatPhone(conv.phone)}
                   </div>
                 )}
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3, display: 'flex', gap: 6, alignItems: 'center' }}>
-                  {conv.displayName && <span>{conv.displayName}</span>}
-                  {!conv.displayName && <span>{conv.messageCount} messages</span>}
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 3 }}>
+                  {conv.messageCount} messages
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <div style={{
+                  fontSize: 11,
+                  color: conv.unreadCount > 0 ? 'var(--text)' : 'var(--text3)',
+                  fontWeight: conv.unreadCount > 0 ? 600 : 400,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
                   {conv.lastMessage.translated_text || conv.lastMessage.sms_text}
                 </div>
               </div>
@@ -760,8 +840,6 @@ export default function SmsPage() {
                   </div>
                 )}
                 <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {selectedConv.displayName && <span>{selectedConv.displayName}</span>}
-                  {selectedConv.displayName && <span>·</span>}
                   <span>{selectedConv.messageCount} messages</span>
                 </div>
               </div>
