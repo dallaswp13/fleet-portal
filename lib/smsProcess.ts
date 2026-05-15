@@ -62,14 +62,20 @@ Drivers from ASC fleets (sub-fleets E, L, S, Y, U) text a support line with IT r
 Drivers come from many backgrounds and may text in ANY language (Spanish, Armenian, Farsi, Russian, etc).
 Extract structured data from their message.
 
-IMPORTANT patterns to recognize:
-- "Cab#6020" or "Cab #6020" or "cab number 6020" → vehicle_number = "6020"
-- "Lease no:25343" or "Lease #25343" → lease_number (driver ID, typically 5 digits)
-- "NoP" or "no payment" or "payment not working" or "card not working" → PIM (back-seat tablet) → reboot_pim (high confidence)
-- "NoM" or "no meter" or "meter not working" or "meter issue" → METER (physical device, separate from the PIM). Typically NOT remote-fixable. A driver-tablet reboot may help but we should confirm with the driver first. Use action="support_driver" with confidence="low" so a human makes the call; do NOT default to reboot_driver without confirmation.
+# Top-priority classification — NoP vs NoM
+ALWAYS evaluate NoP and NoM first before exploring any other issue. These are the most common driver problems and the most critical to classify correctly. Do not start diagnosing other issues (dispatch, Uber, account, signal, etc.) until you have ruled out NoP and NoM.
+
+- "NoP" / "no P" / "no payment" / "payment not working" / "card not working" / "credit card down" / "back tablet says NoP" → PIM (back-seat tablet) issue → action="reboot_pim" with confidence="high"
+- "NoM" / "no meter" / "meter not working" / "meter is off" / "meter issue" / "metro doesn't work" → METER (physical device, separate from the PIM). NOT remote-fixable. A driver-tablet reboot MAY help but confirm with the driver first. Use action="support_driver" with confidence="low" so a human triages.
 - "no money" is AMBIGUOUS — some drivers mean the PIM's "NoM" screen (payment backend down), others literally mean the meter is broken. Use confidence="low" and action="unknown" so a human triages.
-- The METER and the PIM are DIFFERENT devices. Never auto-select a PIM reboot for a message that names the meter.
-- Vehicle numbers are 1-4 digits. Lease numbers are typically 5 digits — do NOT confuse them.
+- The METER and the PIM are DIFFERENT devices. NEVER select reboot_pim for a meter complaint, and NEVER assume PIM when the message references the meter.
+
+# Cab number extraction — read this carefully
+- Vehicle numbers ARE: 3 or 4 digits. ASC vehicle numbers are never 1 or 2 digits.
+- Explicit references win: "Cab#6020", "Cab #6020", "cab number 6020", "vehicle 4283", "#897" → that's the vehicle.
+- Lease numbers are 5+ digits (e.g. "Lease no:25343") — those are driver IDs, NOT cab numbers. Never confuse them.
+- A bare number embedded in a sentence is ONLY a cab number if it's 3-4 digits AND not adjacent to a unit word. "10 minutes", "5 hours", "20 miles", "2 dollars", "30%", "8 am" are time/quantity references — NEVER extract those as vehicle_number. If you see "I'll be there in 10 minutes", vehicle_number is empty, not "10".
+- If a previous message in this same thread already resolved the cab number, keep using it. Only override the cab number if THIS message explicitly states a different cab (e.g. "switching to cab 7211"). Stray digits in a follow-up message are not a cab change.
 - If the message is NOT in English, translate it to English and detect the language.
 
 IMPORTANT — only two actions are currently configured for remote execution:
@@ -106,20 +112,34 @@ function normalizePhone(s: string): string {
   return d
 }
 
+// Words that, when they immediately follow a number, prove the number is a
+// quantity/time reference and NOT a cab number. Without this guard, messages
+// like "I'll be there in 10 minutes" would be misread as cab #10.
+const TIME_QTY_AFTER = /^\s*(min(ute)?s?|hr|hrs|hour|hours|sec|secs|second|seconds|day|days|week|weeks|month|months|year|years|mile|miles|mi|km|kilometers?|gallon|gallons|gal|mph|kph|lbs?|kg|%|am|pm|p\.?m\.?|a\.?m\.?|dollar|dollars|cent|cents|time|times|x|°|deg|degrees?)\b/i
+
 function extractVehicleNumber(text: string): string {
-  const patterns = [
+  // Explicit cab markers: trust the number even if 1-2 digits (e.g. test cabs).
+  const explicit = [
     /\bcab\s*#?\s*(\d{1,4})\b/i,
     /\bvehicle\s*#?\s*(\d{1,4})\b/i,
     /\bunit\s*#?\s*(\d{1,4})\b/i,
     /\bcar\s*#?\s*(\d{1,4})\b/i,
     /\b#(\d{1,4})\b/,
   ]
-  for (const pat of patterns) {
+  for (const pat of explicit) {
     const m = text.match(pat)
     if (m) return m[1]
   }
-  const m = text.match(/(?<!\d)(\d{1,4})(?!\d)/)
-  return m ? m[1] : ''
+  // Fallback for messages like "6675 NOP" — restricted to 3-4 digits since
+  // ASC vehicle numbers are never 1-2 digit, and skip any standalone number
+  // immediately followed by a time/quantity unit ("10 minutes", "5 hours").
+  const re = /(?<!\d)(\d{3,4})(?!\d)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const rest = text.slice(m.index + m[0].length)
+    if (!TIME_QTY_AFTER.test(rest)) return m[1]
+  }
+  return ''
 }
 
 function extractLeaseNumber(text: string): string {
@@ -372,6 +392,13 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   let driverId: string | null = null
   let vehicleNum = intent.vehicle_number
 
+  // Does THIS message explicitly state a cab number (e.g. "cab 567", "#897")?
+  // If yes, the driver is asserting their cab — trust the text. If no, the
+  // phone-resolved seat assignment is more reliable than any stray number
+  // Claude or the regex extracted (this is what broke cab #897 → 10 from
+  // "10 minutes" before).
+  const explicitCabInText = /\b(cab|vehicle|unit|car)\s*#?\s*\d{1,4}\b|\b#\d{1,4}\b/i.test(smsText)
+
   if (senderPhone) {
     // Look up driver by personal phone
     const { data: driverRow } = await svc.from('drivers')
@@ -389,7 +416,11 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
           .order('is_primary', { ascending: false })
           .limit(1).maybeSingle()
         if (assign) {
-          if (!vehicleNum) vehicleNum = String(assign.vehicle_number)
+          // Phone-resolved assignment wins UNLESS the driver explicitly stated
+          // a different cab in THIS message.
+          if (!explicitCabInText || !vehicleNum) {
+            vehicleNum = String(assign.vehicle_number)
+          }
           // Look up the vehicle row for vehicleId and vehicleNameKey
           const { data: v } = await svc.from('vehicles')
             .select('id, vehicle_name_key')
@@ -416,7 +447,9 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
       if (vehicleByPhone) {
         vehicleId = vehicleByPhone.id
         vehicleNameKey = vehicleByPhone.vehicle_name_key
-        if (!vehicleNum) vehicleNum = String(vehicleByPhone.vehicle_number)
+        if (!explicitCabInText || !vehicleNum) {
+          vehicleNum = String(vehicleByPhone.vehicle_number)
+        }
       }
     }
   }
@@ -645,8 +678,22 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   // Friendly label like "PIM Reboot" — set only when the action was actually
   // attempted (executed/failed). Used by the inbox UI footnote.
   let m360ActionLabel: string | null = null
-  if (ruleMatch && primaryAction) {
-    const mapping = resolveM360Action(primaryAction)
+
+  // Two paths can fire step 4b:
+  //   (a) A keyword rule matched and its primary action is executable.
+  //   (b) No rule matched, but Claude's intent classification is one of the
+  //       two executable actions AND confidence is "high" — Dallas opted in
+  //       (2026-05-15) to let confident Claude classifications trigger M360
+  //       even without a rule. The existing Execute Actions kill-switch in
+  //       the inbox header still applies inside executeM360Action.
+  const claudeCanFire =
+    !ruleMatch &&
+    (intent.action === 'reboot_driver' || intent.action === 'reboot_pim') &&
+    intent.confidence === 'high'
+  const actionToFire: string | null = primaryAction ?? (claudeCanFire ? intent.action : null)
+
+  if (actionToFire) {
+    const mapping = resolveM360Action(actionToFire)
     if (mapping && isClaudeAllowedAction(mapping.m360Action)) {
       if (!vehicleId) {
         m360Outcome = 'skipped'
@@ -806,6 +853,11 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
         vehicleId,
         vehicleNumber: vehicleNum || null,
         images: fetchedImages.length > 0 ? fetchedImages : undefined,
+        // If step 4b just fired an M360 action from Claude's intent (no rule
+        // path), pass the outcome through so the Claude reply can both stamp
+        // the row for the inbox footnote AND tell the driver what was done.
+        m360ActionLabel,
+        m360Success: m360ActionLabel ? m360Success : null,
       })
       console.log('[smsProcess] claude conversation:', claudeResult)
     } catch (err) {
@@ -912,9 +964,17 @@ const CONVERSATION_SYSTEM_PROMPT = `You are an AI IT support assistant for LA Ye
 
 You are texting with a taxi driver who is having trouble with their in-vehicle equipment. Your job is to help them resolve the issue on their own, or to confirm their request has been received so a human can follow up.
 
+# Diagnose NoP vs NoM FIRST
+Before exploring any other issue, determine whether the driver is describing NoP or NoM. These two issues are the most common and they have very different fixes — guessing wrong sends the driver to the wrong device. If you cannot tell from the first message, ask a SHORT clarifying question (e.g. "Is the back-seat tablet showing red NoP, or is the meter near the steering wheel not working?") before suggesting anything else.
+
+- NoP = back-seat PIM (Passenger Information Monitor) cannot accept card payments. The PIM shows a red NOP indicator or the message "no payment". Standard fix: reboot the PIM.
+- NoM = the meter (a separate physical device near the driver's dash, NOT the tablet) is not working. NoM is generally NOT remote-fixable; confirm with the driver and escalate to a human. A driver-tablet reboot can sometimes help but only after confirming.
+- The METER (NoM) and the PIM (NoP) are DIFFERENT devices. Never suggest a PIM reboot for a meter complaint, and never suggest the driver "reboot the meter" — they can't.
+
 # Equipment in the vehicle
-- Driver tablet: runs the dispatch app and the payment app (PIM). Mounted near the driver. If it is frozen, black, or unresponsive, a reboot usually fixes it.
-- PIM (Passenger Information Monitor): a second tablet in the back seat. Accepts card payments. If it says "NoM" / "NOM" / "no money" / "no payment", the backend link is down — a PIM reboot is the standard fix.
+- Driver tablet: runs the dispatch app and the payment app interface. Mounted near the driver. If it is frozen, black, or unresponsive, a reboot usually fixes it.
+- PIM (Passenger Information Monitor): a second tablet in the back seat. Accepts card payments. If it says "NoP" / "NOP" / "no payment", the backend payment link is down — a PIM reboot is the standard fix.
+- Meter: physical fare meter near the driver's dash. Separate from the PIM and from any tablet. "NoM" / "no meter" refers to THIS device.
 - Kiosk mode: locks the tablet so only dispatch/PIM apps can run.
 
 # What you CAN do
@@ -1143,6 +1203,7 @@ async function generateDriverReply(
   senderPhone: string,
   smsText: string,
   images?: FetchedImage[],
+  m360Just?: { label: string; success: boolean } | null,
 ): Promise<ClaudeReplyResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
@@ -1186,7 +1247,18 @@ async function generateDriverReply(
     ? `\n\n# Playbook — General Rules\n${mainPlaybook}${categoryPlaybook ? `\n\n# Playbook — ${categoryFile.replace('.md', '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} (detailed)\n${categoryPlaybook}` : ''}`
     : ''
 
-  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock
+  // If step 4b just executed an M360 action (e.g. PIM reboot) from Claude's
+  // own classification, the conversational reply MUST acknowledge that —
+  // otherwise the driver and the action are out of sync.
+  const m360Block = m360Just
+    ? `\n\n# An action was JUST executed
+A "${m360Just.label}" command was sent to MaaS360 ${m360Just.success ? 'and succeeded' : 'but the API call FAILED'} a moment ago, BEFORE you write your reply.
+${m360Just.success
+  ? `Tell the driver you have initiated the ${m360Just.label.toLowerCase()} and they should wait 2-3 minutes for the tablet to come back up. Be brief and confident. Do NOT tell them to do it themselves — it is already happening.`
+  : `Apologize that the automatic ${m360Just.label.toLowerCase()} did not go through and tell the driver you have escalated it to the IT team. Set needs_human = true.`}`
+    : ''
+
+  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock + m360Block
 
   // Build message list from history, then append current user message.
   // The current message may include images (MMS) — use vision content blocks.
@@ -1260,9 +1332,18 @@ async function handleClaudeConversation(
     vehicleId: string | null
     vehicleNumber: string | null
     images?: FetchedImage[]
+    // Set when step 4b in processInboundSms just fired an M360 action from
+    // Claude's intent classification (the no-rule path). Claude's reply
+    // needs to acknowledge that the reboot already happened, and the
+    // outcome gets stamped onto the outbound row for the inbox footnote.
+    m360ActionLabel?: string | null
+    m360Success?: boolean | null
   },
 ): Promise<{ sent: boolean; error: string | null }> {
-  const { inboundId, senderPhone, smsText, vehicleId, vehicleNumber, images } = args
+  const { inboundId, senderPhone, smsText, vehicleId, vehicleNumber, images, m360ActionLabel, m360Success } = args
+  const m360Just = m360ActionLabel
+    ? { label: m360ActionLabel, success: !!m360Success }
+    : null
   if (!senderPhone || !isTwilioConfigured()) {
     await svc.from('sms_messages').update({ claude_status: 'skipped' }).eq('id', inboundId)
     return { sent: false, error: !senderPhone ? 'no_phone' : 'twilio_unconfigured' }
@@ -1284,7 +1365,7 @@ async function handleClaudeConversation(
   // Mark thinking so UI can show the indicator even if Claude is slow.
   await svc.from('sms_messages').update({ claude_status: 'thinking' }).eq('id', inboundId)
 
-  const result = await generateDriverReply(svc, senderPhone, smsText, images)
+  const result = await generateDriverReply(svc, senderPhone, smsText, images, m360Just)
   if (!result.reply) {
     await svc.from('sms_messages').update({
       claude_status: 'failed',
@@ -1327,12 +1408,16 @@ async function handleClaudeConversation(
     result: result.needsHuman ? 'Claude flagged for human follow-up' : 'Claude auto-reply',
     translated_text: hasTranslation ? result.replyEnglish : null,
     source_language: hasTranslation ? result.sourceLanguage : null,
+    // M360 outcome stamped here when step 4b fired from Claude's intent
+    // (no-rule path). Drives the inbox footnote under the Claude bubble.
+    m360_action_label: m360ActionLabel ?? null,
+    m360_action_success: m360ActionLabel ? !!m360Success : null,
     received_at: new Date().toISOString(),
   }
   let { error: outErr } = await svc.from('sms_messages').insert(outboundRow)
   // Graceful fallback if newer columns are missing in the DB.
-  if (outErr && /is_claude_reply|direction|source|twilio_sid|recipient_phone|translated_text|source_language/i.test(outErr.message)) {
-    const { is_claude_reply: _icr, direction: _d, source: _s, twilio_sid: _ts, recipient_phone: _rp, translated_text: _tt, source_language: _sl, ...legacy } = outboundRow
+  if (outErr && /is_claude_reply|direction|source|twilio_sid|recipient_phone|translated_text|source_language|m360_action/i.test(outErr.message)) {
+    const { is_claude_reply: _icr, direction: _d, source: _s, twilio_sid: _ts, recipient_phone: _rp, translated_text: _tt, source_language: _sl, m360_action_label: _ml, m360_action_success: _ms, ...legacy } = outboundRow
     const retry = await svc.from('sms_messages').insert(legacy)
     outErr = retry.error
   }

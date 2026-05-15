@@ -935,23 +935,28 @@ export default function SmsPage() {
                       lineHeight: 1.5
                     }}
                   >
-                    {/* MMS images */}
+                    {/* MMS images — proxied through /api/sms/media-proxy so
+                        the browser doesn't get prompted for Twilio Basic Auth
+                        credentials it doesn't have. */}
                     {msg.media_urls && msg.media_urls.length > 0 && (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: msg.sms_text && msg.sms_text !== '[MMS — photo attached]' ? 8 : 0 }}>
-                        {msg.media_urls.filter(m => m.contentType.startsWith('image/')).map((m, i) => (
-                          <a key={i} href={m.url} target="_blank" rel="noopener noreferrer" title="View full image">
-                            <img
-                              src={m.url}
-                              alt={`MMS attachment ${i + 1}`}
-                              style={{
-                                maxWidth: 220, maxHeight: 180, borderRadius: 6,
-                                border: '1px solid rgba(255,255,255,0.1)',
-                                cursor: 'pointer', display: 'block',
-                              }}
-                              loading="lazy"
-                            />
-                          </a>
-                        ))}
+                        {msg.media_urls.filter(m => m.contentType.startsWith('image/')).map((m, i) => {
+                          const proxied = `/api/sms/media-proxy?url=${encodeURIComponent(m.url)}`
+                          return (
+                            <a key={i} href={proxied} target="_blank" rel="noopener noreferrer" title="View full image">
+                              <img
+                                src={proxied}
+                                alt={`MMS attachment ${i + 1}`}
+                                style={{
+                                  maxWidth: 220, maxHeight: 180, borderRadius: 6,
+                                  border: '1px solid rgba(255,255,255,0.1)',
+                                  cursor: 'pointer', display: 'block',
+                                }}
+                                loading="lazy"
+                              />
+                            </a>
+                          )
+                        })}
                       </div>
                     )}
                     {msg.translated_text ? (
