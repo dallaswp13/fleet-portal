@@ -188,6 +188,8 @@ export default function SmsPage() {
   // up once in a useEffect with empty deps) can read the current value
   // without re-subscribing every time the user clicks a different thread.
   const selectedConversationRef = useRef<string | null>(null)
+  // Export menu open/closed (per-conversation header).
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [conversationMessages, setConversationMessages] = useState<SmsMessage[]>([])
   const [replyText, setReplyText] = useState('')
   const [sendingReply, setSendingReply] = useState(false)
@@ -294,9 +296,43 @@ export default function SmsPage() {
     }
   }, [])
 
+  // Auto-scroll behavior:
+  //   - First paint of a conversation → jump to bottom instantly.
+  //   - Genuinely new message arrives → scroll to bottom smoothly, BUT only
+  //     if the user was already near the bottom. If they've scrolled up to
+  //     read history, leave them alone.
+  //   - Existing message updated (mark-read, m360 stamp, status change) →
+  //     no scroll. Previously this was yanking the user down mid-read.
+  const lastShownConvRef = useRef<string | null>(null)
+  const lastShownMsgIdRef = useRef<string | null>(null)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [conversationMessages])
+    const endEl = messagesEndRef.current
+    if (!endEl) return
+    const scrollContainer = endEl.parentElement
+    const lastMsg = conversationMessages[conversationMessages.length - 1]
+    const lastMsgId = lastMsg?.id ?? null
+
+    const isNewConv = lastShownConvRef.current !== selectedConversation
+    const isNewMessage = !!lastMsgId && lastMsgId !== lastShownMsgIdRef.current
+
+    if (isNewConv) {
+      // Jumping into a different thread — always start at the bottom so the
+      // most recent message is in view.
+      endEl.scrollIntoView({ behavior: 'auto' })
+      lastShownConvRef.current = selectedConversation
+      lastShownMsgIdRef.current = lastMsgId
+    } else if (isNewMessage) {
+      // A new message arrived. Only auto-scroll if the user is already at
+      // (or very near) the bottom of the thread; if they've scrolled up to
+      // re-read something earlier, do not snap them down.
+      const nearBottom = !scrollContainer
+        || scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 120
+      if (nearBottom) endEl.scrollIntoView({ behavior: 'smooth' })
+      lastShownMsgIdRef.current = lastMsgId
+    }
+    // Else: existing messages were updated in place (read_at, m360 fields,
+    // claude_status, feedback). Do not scroll.
+  }, [conversationMessages, selectedConversation])
 
   // Keep the ref in sync so the Realtime handler always sees the current
   // selected conversation when deciding whether to mark a new inbound read.
@@ -326,6 +362,88 @@ export default function SmsPage() {
     } else if (error) {
       console.error('[inbox] failed to mark as read:', error.message)
     }
+  }
+
+  /**
+   * Build a plain-text export of the currently selected conversation, suitable
+   * for sharing with the team via email/Slack. Includes timestamps, roles,
+   * translations (if any), and M360 action outcomes.
+   */
+  function buildConversationExport(): string {
+    if (!selectedConv) return ''
+    const lines: string[] = []
+    const label = selectedConv.vehicleMatch
+      ? `Cab #${selectedConv.vehicleMatch}`
+      : formatPhone(selectedConv.phone)
+    lines.push(`Fleet Portal — SMS conversation`)
+    lines.push(`Subject:  ${label}`)
+    lines.push(`Phone:    ${formatPhone(selectedConv.phone)}`)
+    lines.push(`Messages: ${selectedConv.messageCount}`)
+    lines.push(`Exported: ${new Date().toLocaleString()}`)
+    lines.push(``)
+    lines.push(`─────────────────────────────────────────────`)
+    lines.push(``)
+    for (const msg of conversationMessages) {
+      const ts = new Date(msg.received_at).toLocaleString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      })
+      let role: string
+      if (msg.direction === 'inbound') role = 'Driver'
+      else if (msg.is_claude_reply || msg.action === 'claude_reply') role = 'Claude'
+      else if (msg.action === 'auto_reply') role = 'Auto-Reply'
+      else role = msg.sender || 'Dallas'
+
+      const hasTranslation = !!msg.translated_text && msg.translated_text !== msg.sms_text
+      lines.push(`[${ts}]  ${role}`)
+      if (hasTranslation) {
+        lines.push(`  ${msg.translated_text}`)
+        lines.push(`  (${msg.source_language || 'orig'}: ${msg.sms_text})`)
+      } else if (msg.sms_text && msg.sms_text !== '[MMS — photo attached]') {
+        lines.push(`  ${msg.sms_text}`)
+      }
+      if (msg.media_urls && msg.media_urls.length > 0) {
+        lines.push(`  [${msg.media_urls.length} attachment${msg.media_urls.length > 1 ? 's' : ''}]`)
+      }
+      if (msg.m360_action_label) {
+        lines.push(`  → ${msg.m360_action_label}: ${msg.m360_action_success ? '✓ Success' : '✗ Failure'}`)
+      }
+      if (msg.direction === 'inbound' && msg.result) {
+        lines.push(`  (system: ${msg.result})`)
+      }
+      lines.push(``)
+    }
+    return lines.join('\n')
+  }
+
+  async function exportCopyToClipboard() {
+    const text = buildConversationExport()
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success('Conversation copied to clipboard')
+    } catch {
+      toast.error('Copy failed — your browser may have blocked clipboard access')
+    }
+    setExportMenuOpen(false)
+  }
+
+  function exportDownloadTxt() {
+    const text = buildConversationExport()
+    if (!text || !selectedConv) return
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const fileLabel = selectedConv.vehicleMatch
+      ? `cab-${selectedConv.vehicleMatch}`
+      : `phone-${selectedConv.phone}`
+    a.download = `sms-${fileLabel}-${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    setExportMenuOpen(false)
   }
 
   // Refresh conversation view when messages state updates
@@ -839,8 +957,53 @@ export default function SmsPage() {
                     {formatPhone(selectedConv.phone)}
                   </div>
                 )}
-                <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span>{selectedConv.messageCount} messages</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text3)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span>{selectedConv.messageCount} messages</span>
+                  </div>
+                  {/* Export menu — copy to clipboard or download as .txt
+                      so the team can be looped in on a conversation. */}
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      onClick={() => setExportMenuOpen(o => !o)}
+                      style={{
+                        fontSize: 11, padding: '6px 10px',
+                        background: 'var(--bg3)', color: 'var(--text)',
+                        border: '1px solid var(--border)', borderRadius: 6,
+                        cursor: 'pointer', fontWeight: 600,
+                      }}>
+                      Export ▾
+                    </button>
+                    {exportMenuOpen && (
+                      <>
+                        <div
+                          onClick={() => setExportMenuOpen(false)}
+                          style={{ position: 'fixed', inset: 0, zIndex: 50 }}
+                        />
+                        <div style={{
+                          position: 'absolute', top: '100%', right: 0, marginTop: 4,
+                          background: 'var(--bg)', border: '1px solid var(--border)',
+                          borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                          minWidth: 200, zIndex: 51, padding: 4,
+                        }}>
+                          <button
+                            onClick={exportCopyToClipboard}
+                            style={{ width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 12, background: 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--text)' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            📋 Copy to clipboard
+                          </button>
+                          <button
+                            onClick={exportDownloadTxt}
+                            style={{ width: '100%', textAlign: 'left', padding: '8px 10px', fontSize: 12, background: 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--text)' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3)')}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            💾 Download as .txt
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
