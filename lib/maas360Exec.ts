@@ -12,10 +12,7 @@
 
 import { writeAuditLog } from '@/lib/audit'
 import { isClaudeExecuteActionsEnabled } from '@/lib/appSettings'
-import {
-  rebootDevice, wipeDevice, enterKioskMode, exitKioskMode,
-  clearAppData, clearDispatchApp, clearPimBluetooth, initiateSupport,
-} from '@/lib/m360-service-client'
+import { rebootDevice } from '@/lib/m360-service-client'
 
 export type M360Caller = 'user' | 'claude'
 
@@ -42,16 +39,13 @@ export interface ExecM360Result {
 }
 
 /**
- * Actions Claude is allowed to execute autonomously. Everything else must be
- * triggered by a human — in practice these are the non-destructive, idempotent
- * "fix it now" actions. `wipe`, `kiosk_*`, and `support_*` are intentionally
- * excluded (destructive, or require a live human on the other end).
+ * Actions Claude is allowed to execute autonomously. Reboot is the only
+ * verified remote action against the MaaS360 API, so it is the only one Claude
+ * (or any caller) can run. Other action types were removed when they could not
+ * be verified against the live API.
  */
 const CLAUDE_ALLOWED_ACTIONS = new Set<string>([
   'reboot',
-  'clear_dispatch',
-  'clear_pim_bt',
-  'clear_app_data',
 ])
 
 export function isClaudeAllowedAction(action: string): boolean {
@@ -59,14 +53,17 @@ export function isClaudeAllowedAction(action: string): boolean {
 }
 
 export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Result> {
-  const { action, deviceId, vehicleNumber, packageName, confirmed, caller, actorEmail } = args
+  const { action, deviceId, vehicleNumber, caller, actorEmail } = args
 
   if (!action || !deviceId) {
     return { success: false, message: 'action and deviceId are required', error: 'bad_request', status: 400 }
   }
 
-  if (action === 'wipe' && !confirmed) {
-    return { success: false, message: 'Wipe requires confirmed: true', error: 'not_confirmed', status: 400 }
+  // Only verified actions are accepted. Reboot is the only remote action wired
+  // to the MaaS360 API; anything else is rejected here so the portal never
+  // exposes a control that silently does nothing.
+  if (!isClaudeAllowedAction(action)) {
+    return { success: false, message: `Action "${action}" is not supported.`, error: 'unsupported_action', status: 400 }
   }
 
   // Runtime kill-switch for Claude-initiated actions. Human-initiated clicks
@@ -76,7 +73,7 @@ export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Res
       await writeAuditLog({
         userEmail: actorEmail, action,
         targetType: 'device', targetId: deviceId, vehicleNumber: vehicleNumber ?? null,
-        payload: { deviceId, packageName, caller },
+        payload: { deviceId, caller },
         result: { blocked: 'Action not allowed for Claude' },
         success: false,
       })
@@ -93,7 +90,7 @@ export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Res
       await writeAuditLog({
         userEmail: actorEmail, action,
         targetType: 'device', targetId: deviceId, vehicleNumber: vehicleNumber ?? null,
-        payload: { deviceId, packageName, caller },
+        payload: { deviceId, caller },
         result: { blocked: 'Claude execute-actions disabled' },
         success: false,
       })
@@ -108,29 +105,11 @@ export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Res
   }
 
   let result: { success: boolean; raw: unknown }
-  let auditAction = action
+  const auditAction = action
 
   try {
     switch (action) {
-      case 'reboot':         result = await rebootDevice(deviceId); break
-      case 'wipe':           result = await wipeDevice(deviceId); break
-      case 'kiosk_enter':    result = await enterKioskMode(deviceId); break
-      case 'kiosk_exit':     result = await exitKioskMode(deviceId); break
-      case 'clear_app_data': result = await clearAppData(deviceId, packageName); break
-      case 'clear_dispatch':
-        result = await clearDispatchApp(deviceId)
-        auditAction = 'clear_dispatch'
-        break
-      case 'clear_pim_bt':
-        result = await clearPimBluetooth(deviceId)
-        auditAction = 'clear_pim_bt'
-        break
-      case 'support_driver':
-      case 'support_pim': {
-        const sup = await initiateSupport(deviceId)
-        result = { success: sup.success, raw: sup.raw }
-        break
-      }
+      case 'reboot': result = await rebootDevice(deviceId); break
       default:
         return { success: false, message: `Unknown action: ${action}`, error: 'unknown_action', status: 400 }
     }
@@ -139,7 +118,7 @@ export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Res
     await writeAuditLog({
       userEmail: actorEmail, action: auditAction,
       targetType: 'device', targetId: deviceId, vehicleNumber: vehicleNumber ?? null,
-      payload: { deviceId, packageName, caller }, result: { error: message }, success: false,
+      payload: { deviceId, caller }, result: { error: message }, success: false,
     })
     return { success: false, message, error: message, status: 502 }
   }
@@ -147,7 +126,7 @@ export async function executeM360Action(args: ExecM360Args): Promise<ExecM360Res
   await writeAuditLog({
     userEmail: actorEmail, action: auditAction,
     targetType: 'device', targetId: deviceId, vehicleNumber: vehicleNumber ?? null,
-    payload: { deviceId, packageName, caller }, result: result.raw as Record<string, unknown>,
+    payload: { deviceId, caller }, result: result.raw as Record<string, unknown>,
     success: result.success,
   })
 

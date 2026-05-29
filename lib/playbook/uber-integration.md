@@ -23,8 +23,8 @@ Driver receives Uber requests but they fail when accepted.
 ### Can't Enable Uber / Green Button Won't Turn On
 The Uber toggle won't activate at all.
 - **Driver says:** "uber green button doesn't turn on," "can't turn on uber," "missing uber settings"
-- **Action:** `reboot_driver` → `clear_dispatch` if reboot doesn't help
-- **Escalation:** If settings are missing after app data clear, likely needs re-provisioning
+- **Action:** `reboot_driver`. If a reboot doesn't help, escalate (needs_human) — likely needs re-provisioning on the backend.
+- **Escalation:** Missing Uber settings usually need a backend re-sync, not a device action.
 
 ### Uber App Separate From Dispatch
 Some drivers have standalone Uber driver app issues (separate from the integrated system).
@@ -40,9 +40,8 @@ Some drivers have standalone Uber driver app issues (separate from the integrate
    ├─ Reply: "Rebooting your tablet to refresh the Uber connection. Give it a few minutes."
    │
 2. Still no Uber calls after reboot
-   ├─ Try clear_dispatch
-   ├─ Reply: "Cleared the app data. Sign back in and check if the Uber toggle works."
-   │
+   └─ Escalate (needs_human) — Uber re-provisioning is a backend task, not a device action.
+      Do NOT claim you cleared app data; that isn't available.
 3. Still not working
    ├─ If ONE driver: likely account-level issue → escalate to office
    ├─ If MULTIPLE drivers same day: likely system-wide → flag immediately

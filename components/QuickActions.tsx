@@ -11,35 +11,23 @@ interface QuickAction {
 }
 
 /* ── Actions config ─────────────────────────────────────────── */
-// Single unified action grid — no more split between "Working" and "M360" since
-// MaaS360 command execution is live (auth + reboot + clear-app-data + wipe all
-// verified against the real API).
+// Reboot is the only verified MaaS360 device command, so Reboot Tablet is the
+// only action that calls the M360 API directly.
 //
-// Replace Driver Tablet and Surrender Vehicle were removed 2026-04-15 per user
-// request — the wipe-first workflows weren't getting used and the destructive
-// path is better handled manually in the M360 portal.
+// Create Vehicle was removed 2026-05-29: the Fleet Portal is not a source of
+// truth (vehicle records come from CCSI.xlsx), and its MaaS360 user-provisioning
+// call was unverified.
 //
 // Remote Support is kept as a portal deep-link: the MaaS360 Webservices API
-// has no "initiate remote control" endpoint (confirmed against
-// "MaaS360 Webservices Reference Guide" v10.91, pages 125-172 — the action
-// type list contains reboot, wipe, kiosk, clear data, etc. but not remote
-// control). The admin portal is the only way to launch a TeamViewer session,
-// so this card jumps straight there.
+// has no "initiate remote control" endpoint, so this card jumps straight to the
+// admin portal, where an admin can launch a TeamViewer session manually.
 const ACTIONS: QuickAction[] = [
   { id: 'reboot_tablet',      icon: '🔄', color: '#3498db',      title: 'Reboot Tablet',         description: 'Send a reboot command to a driver or PIM tablet via MaaS360.' },
   { id: 'remote_support',     icon: '🛠', color: 'var(--green)', title: 'Remote Support',        description: 'Open the device in MaaS360 to launch a TeamViewer remote session.' },
-  { id: 'create_vehicle',     icon: '🆕', color: '#1abc9c',      title: 'Create Vehicle',        description: 'Add a new vehicle record and provision driver + PIM users in MaaS360.' },
   { id: 'get_available_line', icon: '📞', color: '#8e44ad',      title: 'Get Available Line',    description: 'Find an unassigned Verizon line and assign it to a vehicle.' },
   { id: 'get_rfid',           icon: '🏷️', color: '#16a085',      title: 'Get RFID',              description: 'Suggest an RFID for a vehicle using fleet conventions, or pick an unused one for L/S fleets.' },
   { id: 'new_inbox_rule',     icon: '⚙️', color: '#e67e22',      title: 'New Inbox Rule',        description: 'Create an automation rule for incoming SMS messages.', href: '/sms' },
   { id: 'export_data',        icon: '📤', color: '#7f8c8d',      title: 'Export Fleet Data',     description: 'Download all fleet data as an Excel spreadsheet.' },
-]
-
-const FLEETS = [
-  { label: 'E (ASC)', value: 'E' }, { label: 'L (ASC)', value: 'L' },
-  { label: 'S (ASC)', value: 'S' }, { label: 'Y (ASC)', value: 'Y' },
-  { label: 'U (ASC)', value: 'U' }, { label: 'C (CYC)', value: 'C' },
-  { label: 'G (SDY)', value: 'G' }, { label: 'D (DEN)', value: 'D' },
 ]
 
 /* ── Helpers ────────────────────────────────────────────────── */
@@ -334,145 +322,6 @@ function GetAvailableLineModal({ action, onClose }: { action: QuickAction; onClo
   )
 }
 
-/* ── Create Vehicle workflow ────────────────────────────────── */
-function CreateVehicleModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
-  const [vNum,    setVNum]    = useState('')
-  const [fleet,   setFleet]   = useState('')
-  const [busy,    setBusy]    = useState(false)
-  const [stepLog, setStepLog] = useState<string[]>([])
-  const [result,  setResult]  = useState<{ ok: boolean; msg: string; steps?: { step: string; success: boolean; detail: string }[] } | null>(null)
-
-  async function create() {
-    const num = parseInt(vNum.trim())
-    if (!num || !fleet) return
-    setBusy(true)
-    setStepLog([`Creating vehicle #${num}${fleet}…`])
-    const sb = createClient()
-
-    const { data: existing } = await sb.from('vehicles').select('id').eq('vehicle_number', num).eq('fleet_id', fleet).limit(1).single()
-    if (existing) { setResult({ ok: false, msg: `Vehicle #${num} ${fleet} already exists in the database.` }); setBusy(false); return }
-
-    const nameKey = `${num}${fleet}`.toLowerCase()
-    const { error } = await sb.from('vehicles').insert({
-      vehicle_number: num, fleet_id: fleet,
-      vehicle_name_key: nameKey,
-      sheet_tab: 'Active Vehicles',
-      updated_at: new Date().toISOString()
-    })
-    if (error) { setResult({ ok: false, msg: `DB insert failed: ${error.message}` }); setBusy(false); return }
-
-    setStepLog(prev => [...prev, `✓ Vehicle row created (${num}${fleet})`, `Provisioning MaaS360 users…`])
-
-    const { data: { user } } = await sb.auth.getUser()
-    try { await sb.from('audit_log').insert({ user_email: user?.email, action: 'create_vehicle', target_type: 'vehicle', target_id: nameKey, vehicle_number: num, success: true }) } catch { /* non-fatal */ }
-
-    let m360Ok = false
-    let m360Steps: { step: string; success: boolean; detail: string }[] = []
-    let m360Msg = ''
-    try {
-      const res = await fetch('/api/maas360/create-vehicle-users', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehicleNumber: num, fleetId: fleet })
-      })
-      const data = await res.json()
-      m360Ok = data.success ?? false
-      m360Steps = data.steps ?? []
-      m360Msg = data.message ?? (data.error ?? 'No response')
-    } catch (err) {
-      m360Msg = err instanceof Error ? err.message : 'Network error calling MaaS360'
-    }
-
-    setBusy(false)
-    const summary = [
-      `✅ Vehicle #${num}${fleet} created in database.`,
-      m360Ok
-        ? `✅ MaaS360: ${m360Msg}`
-        : `⚠️ MaaS360: ${m360Msg}`,
-      '',
-      `Driver user: ${num}${fleet} → "${fleet} front" group`,
-      `PIM user:    *${num}${fleet} → "${fleet} pim" group`,
-    ].join('\n')
-    setResult({ ok: true, msg: summary, steps: m360Steps })
-  }
-
-  function reset() {
-    setResult(null); setStepLog([]); setVNum(''); setFleet('')
-  }
-
-  return (
-    <ModalShell action={action} onClose={onClose}>
-      {result ? (
-        <div>
-          <ResultBanner ok={result.ok} msg={result.msg} />
-          {result.steps && result.steps.length > 0 && (
-            <div style={{ marginTop: 12, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '10px 12px' }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text3)', marginBottom: 6 }}>M360 Provisioning Steps</div>
-              {result.steps.map((s, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, fontSize: 11, padding: '3px 0', alignItems: 'flex-start' }}>
-                  <span style={{ color: s.success ? 'var(--green)' : 'var(--red)', flexShrink: 0, width: 14 }}>{s.success ? '✓' : '✗'}</span>
-                  <span style={{ flex: 1 }}>
-                    <div style={{ color: 'var(--text)' }}>{s.step}</div>
-                    {s.detail && <div style={{ color: 'var(--text3)', fontSize: 10, marginTop: 2, wordBreak: 'break-word' }}>{s.detail}</div>}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-            <button className="btn-secondary" onClick={reset}>Add another</button>
-            <button className="btn-primary" onClick={onClose} style={{ background: action.color, borderColor: action.color }}>Done</button>
-          </div>
-        </div>
-      ) :
-      !fleet ? (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Select Fleet</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-            {FLEETS.map(f => (
-              <button key={f.value} onClick={() => setFleet(f.value)}
-                style={{ padding: '9px 12px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: 13 }}>
-                {f.label}
-              </button>
-            ))}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, lineHeight: 1.5 }}>
-            Creating a vehicle will also provision two MaaS360 users:<br />
-            • Driver — username <code>#{`{vehicle#}${'{fleet}'}`}</code> in <code>{'{fleet}'} front</code> group<br />
-            • PIM — username <code>*{`{vehicle#}${'{fleet}'}`}</code> in <code>{'{fleet}'} pim</code> group
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Vehicle Number</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input autoFocus placeholder="e.g. 9999" value={vNum} onChange={e => setVNum(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !busy && create()} style={{ flex: 1 }} />
-            <button className="btn-primary btn-sm" onClick={create} disabled={busy || !vNum.trim()}
-              style={{ background: action.color, borderColor: action.color }}>
-              {busy ? <Spinner /> : 'Create'}
-            </button>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
-            Fleet: {fleet} · Creates vehicle row + driver/PIM users in MaaS360.
-          </div>
-          {vNum.trim() && (
-            <div style={{ marginTop: 10, background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '8px 10px', fontSize: 11, color: 'var(--text2)' }}>
-              <div>Driver user: <code>{vNum.trim()}{fleet}</code> → <code>{fleet} front</code></div>
-              <div>PIM user: <code>*{vNum.trim()}{fleet}</code> → <code>{fleet} pim</code></div>
-            </div>
-          )}
-          {busy && stepLog.length > 0 && (
-            <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
-              {stepLog.map((l, i) => <div key={i}>{l}</div>)}
-            </div>
-          )}
-          <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => setFleet('')} disabled={busy}>← Change fleet</button>
-        </div>
-      )}
-    </ModalShell>
-  )
-}
-
 /* ── Export Data workflow ───────────────────────────────────── */
 function ExportDataModal({ action, onClose }: { action: QuickAction; onClose: () => void }) {
   const [busy,   setBusy]   = useState(false)
@@ -763,7 +612,6 @@ export default function QuickActions() {
     switch (active.id) {
       case 'remote_support':     return <RemoteSupportModal     {...props} />
       case 'reboot_tablet':      return <RebootTabletModal      {...props} />
-      case 'create_vehicle':     return <CreateVehicleModal     {...props} />
       case 'get_available_line': return <GetAvailableLineModal  {...props} />
       case 'get_rfid':           return <GetRfidModal           {...props} />
       case 'export_data':        return <ExportDataModal        {...props} />

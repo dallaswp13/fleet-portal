@@ -61,69 +61,15 @@ export async function rebootDevice(deviceId: string): Promise<ActionResult> {
   return toActionResult(resp)
 }
 
-export async function wipeDevice(deviceId: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.wipeDevice(deviceId)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'wipe', deviceId, confirmed: true })
-  return toActionResult(resp)
-}
-
-export async function enterKioskMode(deviceId: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.enterKioskMode(deviceId)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'kiosk_enter', deviceId })
-  return toActionResult(resp)
-}
-
-export async function exitKioskMode(deviceId: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.exitKioskMode(deviceId)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'kiosk_exit', deviceId })
-  return toActionResult(resp)
-}
-
-export async function clearAppData(deviceId: string, pkg?: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.clearAppData(deviceId, pkg)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'clear_app_data', deviceId, packageName: pkg })
-  return toActionResult(resp)
-}
-
-export async function clearDispatchApp(deviceId: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.clearDispatchApp(deviceId)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'clear_dispatch', deviceId })
-  return toActionResult(resp)
-}
-
-export async function clearPimBluetooth(deviceId: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.clearPimBluetooth(deviceId)
-  const resp = await serviceCall<ServiceActionResponse>('/api/device/action', 'POST', { action: 'clear_pim_bt', deviceId })
-  return toActionResult(resp)
-}
-
-export async function initiateSupport(deviceId: string): Promise<ActionResult> {
-  // Service doesn't have a separate support endpoint — it's just a reboot
-  if (!isServiceConfigured()) return directClient.initiateSupport(deviceId)
-  return rebootDevice(deviceId)
-}
+// Reboot is the only verified remote device action. Wipe / kiosk / clear-data /
+// support wrappers were removed because they could not be verified against the
+// live MaaS360 API.
 
 // ── Device Search ────────────────────────────────────────────────────────────
 
 export async function searchDeviceByName(deviceName: string): Promise<{ deviceId: string | null; found: unknown[] }> {
   if (!isServiceConfigured()) return directClient.searchDeviceByName(deviceName)
   return serviceCall<{ deviceId: string | null; found: unknown[] }>(`/api/device/search?name=${encodeURIComponent(deviceName)}`, 'GET')
-}
-
-// ── User Provisioning ────────────────────────────────────────────────────────
-
-export async function createM360User(params: {
-  userName: string; domain?: string; emailAddress?: string; firstName?: string; lastName?: string
-}): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.createM360User(params)
-  const resp = await serviceCall<ServiceActionResponse>('/api/user/create', 'POST', params)
-  return toActionResult(resp)
-}
-
-export async function addUserToM360Group(userName: string, groupName: string): Promise<ActionResult> {
-  if (!isServiceConfigured()) return directClient.addUserToM360Group(userName, groupName)
-  const resp = await serviceCall<ServiceActionResponse>('/api/user/assign-group', 'POST', { userName, groupName })
-  return toActionResult(resp)
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ Tablet appears active but no ride offers come through.
 ### Call Drops on Accept
 Driver taps "Accept" on a ride offer but the ride doesn't open.
 - **Driver says:** "I press accept and it doesn't open the ride," "call drops when I accept," "ride disappears"
-- **Action:** `reboot_driver` → `clear_dispatch` if persists
+- **Action:** `reboot_driver`. If it persists after a reboot, escalate (needs_human) — there is no remote app clear.
 
 ### Duplicate Dispatch
 Two drivers get sent to the same passenger.

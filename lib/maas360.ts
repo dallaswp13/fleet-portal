@@ -328,52 +328,11 @@ export async function rebootDevice(deviceId: string): Promise<{ success: boolean
   return executeAction(deviceId, 'MDM_AFW_REMOTE_REBOOT')
 }
 
-/**
- * Legacy sendAction endpoint (kept for actions that may not have an
- * actionapis equivalent yet). Uses the older XML-body format:
- *   POST /device-apis/devices/1.0/{billingID}/sendAction
- */
-const ACTION_MAP: Record<string, string> = {
-  wipe: 'FactoryReset', kiosk_enter: 'EnableKioskMode', kiosk_exit: 'DisableKioskMode', clear_app_data: 'ClearAppData',
-}
-
-async function sendDeviceAction(deviceId: string, actionKey: string, extra?: Record<string, string>): Promise<{ success: boolean; raw: unknown }> {
-  const { BASE_URL, BILLING_ID } = cfg()
-  const token  = await getAuthToken()
-  const action = ACTION_MAP[actionKey] ?? actionKey
-
-  const extraXml = extra
-    ? Object.entries(extra).map(([k, v]) => `  <${k}>${escapeXml(v)}</${k}>`).join('\n')
-    : ''
-
-  const xmlBody = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<sendActionRequest>',
-    '  <deviceIds>',
-    `    <deviceId>${escapeXml(deviceId)}</deviceId>`,
-    '  </deviceIds>',
-    `  <action>${escapeXml(action)}</action>`,
-    extraXml,
-    '</sendActionRequest>',
-  ].join('\n')
-
-  const { ok, parsed } = await m360Fetch(
-    `${BASE_URL}/device-apis/devices/1.0/${BILLING_ID}/sendAction`,
-    token, 'POST', xmlBody
-  )
-  return { success: ok, raw: parsed }
-}
-
-const DISPATCH_PKG = () => process.env.DISPATCH_APP_PACKAGE ?? 'com.ccsi.taxidispatch'
-const BT_PKG       = 'com.android.bluetooth'
-
-export async function wipeDevice(d: string)        { return sendDeviceAction(d, 'wipe') }
-export async function enterKioskMode(d: string)    { return sendDeviceAction(d, 'kiosk_enter') }
-export async function exitKioskMode(d: string)     { return sendDeviceAction(d, 'kiosk_exit') }
-export async function clearAppData(d: string, pkg?: string) { return sendDeviceAction(d, 'clear_app_data', pkg ? { packageName: pkg } : undefined) }
-export async function clearDispatchApp(d: string)  { return clearAppData(d, DISPATCH_PKG()) }
-export async function clearPimBluetooth(d: string) { return clearAppData(d, BT_PKG) }
-export async function initiateSupport(d: string)   { return rebootDevice(d) }
+// NOTE: Reboot (MDM_AFW_REMOTE_REBOOT, above) is the only remote device action
+// verified against the live MaaS360 API. The legacy sendAction helpers for
+// wipe / kiosk / clear-app-data — and the user-provisioning endpoints — were
+// removed because they could not be verified, and a production portal should
+// not expose controls that may silently do nothing.
 
 /* ── Device search ────────────────────────────────────────────────────── */
 
@@ -391,73 +350,6 @@ export async function searchDeviceByName(deviceName: string): Promise<{ deviceId
   const rawDevice = devices?.device
   const list: Record<string, unknown>[] = Array.isArray(rawDevice) ? rawDevice : rawDevice ? [rawDevice as Record<string, unknown>] : []
   return { deviceId: (list[0]?.maas360DeviceID as string) ?? null, found: list }
-}
-
-/* ── User provisioning ────────────────────────────────────────────────── */
-
-/**
- * Create a MaaS360 user (local domain) and optionally assign to a user group.
- * Used by the Create Vehicle quick action to provision driver + PIM accounts.
- *
- * Endpoints (HCL MaaS360 User APIs):
- *   POST /user-apis/user/1.0/addUser/customer/{billingID}
- *   POST /user-apis/user/1.0/addUserToGroup/customer/{billingID}
- *
- * NOTE: These endpoints require M360 user-management permissions on the API
- * application. If disabled, callers will receive a non-OK response with the
- * raw XML error payload. This is expected until API access is provisioned.
- */
-export async function createM360User(params: {
-  userName: string
-  domain?: string
-  emailAddress?: string
-  firstName?: string
-  lastName?: string
-}): Promise<{ success: boolean; raw: unknown }> {
-  const { BASE_URL, BILLING_ID } = cfg()
-  const token = await getAuthToken()
-
-  const userName    = params.userName
-  const domain      = params.domain ?? 'local'
-  const email       = params.emailAddress ?? `${userName}@layellowcab.local`
-  const firstName   = params.firstName ?? userName
-  const lastName    = params.lastName  ?? 'Driver'
-
-  const xmlBody = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<user>',
-    `  <userName>${escapeXml(userName)}</userName>`,
-    `  <domain>${escapeXml(domain)}</domain>`,
-    `  <emailAddress>${escapeXml(email)}</emailAddress>`,
-    `  <firstName>${escapeXml(firstName)}</firstName>`,
-    `  <lastName>${escapeXml(lastName)}</lastName>`,
-    '</user>',
-  ].join('\n')
-
-  const { ok, parsed } = await m360Fetch(
-    `${BASE_URL}/user-apis/user/1.0/addUser/customer/${BILLING_ID}`,
-    token, 'POST', xmlBody
-  )
-  return { success: ok, raw: parsed }
-}
-
-export async function addUserToM360Group(userName: string, groupName: string): Promise<{ success: boolean; raw: unknown }> {
-  const { BASE_URL, BILLING_ID } = cfg()
-  const token = await getAuthToken()
-
-  const xmlBody = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<userGroupAssociation>',
-    `  <userName>${escapeXml(userName)}</userName>`,
-    `  <userGroupName>${escapeXml(groupName)}</userGroupName>`,
-    '</userGroupAssociation>',
-  ].join('\n')
-
-  const { ok, parsed } = await m360Fetch(
-    `${BASE_URL}/user-apis/user/1.0/addUserToGroup/customer/${BILLING_ID}`,
-    token, 'POST', xmlBody
-  )
-  return { success: ok, raw: parsed }
 }
 
 /* ── Auth test ────────────────────────────────────────────────────────── */

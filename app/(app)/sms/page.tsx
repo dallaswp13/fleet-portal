@@ -44,6 +44,12 @@ interface SmsMessage {
   // Unread tracking (migration 047). NULL = unread; populated when the
   // conversation is opened in the inbox. Only meaningful for inbound rows.
   read_at: string | null
+  // Escalation tracking (migration 048). needs_human = true means Claude (or a
+  // failed auto-reply) flagged this thread for a person. Cleared when an admin
+  // marks the thread resolved.
+  needs_human: boolean | null
+  escalated_at: string | null
+  resolved_at: string | null
 }
 
 interface SmsRule {
@@ -58,16 +64,12 @@ interface SmsRule {
   created_by: string
 }
 
+// Reboot is the only verified remote M360 action. Clear / kiosk / support /
+// wipe options were removed so rules can't be built around actions that don't
+// actually execute.
 const ACTION_OPTIONS = [
   { value: 'reboot_driver', label: '↺ Reboot Driver Tablet', group: 'Reboot' },
   { value: 'reboot_pim', label: '↺ Reboot PIM Tablet', group: 'Reboot' },
-  { value: 'kiosk_enter', label: '⬛ Enable Kiosk Mode', group: 'Kiosk' },
-  { value: 'kiosk_exit', label: '⬜ Exit Kiosk Mode', group: 'Kiosk' },
-  { value: 'clear_dispatch', label: '🗑 Clear Dispatch App', group: 'Clear' },
-  { value: 'clear_pim_bt', label: '🔵 Clear PIM Bluetooth', group: 'Clear' },
-  { value: 'clear_app_data', label: '🗑 Clear All App Data', group: 'Clear' },
-  { value: 'support_driver', label: '🛠 Initiate Driver Support', group: 'Support' },
-  { value: 'support_pim', label: '🛠 Initiate PIM Support', group: 'Support' },
   { value: 'auto_reply', label: '💬 Auto Reply', group: 'Other' },
 ]
 
@@ -78,19 +80,11 @@ function resolveM360Action(smsAction: string): { m360Action: string; isPim: bool
   switch (smsAction) {
     case 'reboot_driver': return { m360Action: 'reboot', isPim: false }
     case 'reboot_pim': return { m360Action: 'reboot', isPim: true }
-    case 'support_driver': return { m360Action: 'support_driver', isPim: false }
-    case 'support_pim': return { m360Action: 'support_pim', isPim: true }
-    case 'clear_pim_bt': return { m360Action: 'clear_pim_bt', isPim: true }
-    case 'kiosk_enter': return { m360Action: 'kiosk_enter', isPim: false }
-    case 'kiosk_exit': return { m360Action: 'kiosk_exit', isPim: false }
-    case 'clear_dispatch': return { m360Action: 'clear_dispatch', isPim: false }
-    case 'clear_app_data': return { m360Action: 'clear_app_data', isPim: false }
-    case 'wipe': return { m360Action: 'wipe', isPim: false }
     default: return { m360Action: smsAction, isPim: false }
   }
 }
 
-const DESTRUCTIVE_ACTIONS = new Set(['wipe', 'kiosk_enter', 'kiosk_exit'])
+const DESTRUCTIVE_ACTIONS = new Set<string>([])
 
 function normalizePhone(phone: string | null | undefined): string {
   if (!phone) return ''
@@ -161,6 +155,9 @@ interface Conversation {
   unprocessedCount: number
   // Count of unread inbound messages — drives the conv-list dot indicator.
   unreadCount: number
+  // Count of messages flagged for human follow-up that aren't yet resolved —
+  // drives the "Needs follow-up" badge and filter.
+  needsHumanCount: number
 }
 
 export default function SmsPage() {
@@ -197,6 +194,8 @@ export default function SmsPage() {
   const [assignVeh, setAssignVeh] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [showNeedsHumanOnly, setShowNeedsHumanOnly] = useState(false)
+  const [resolvingPhone, setResolvingPhone] = useState<string | null>(null)
   const [committingId, setCommittingId] = useState<string | null>(null)
   const [confirmMsg, setConfirmMsg] = useState<SmsMessage | null>(null)
   const [commitResult, setCommitResult] = useState<{ id: string; ok: boolean; text: string } | null>(null)
@@ -525,6 +524,9 @@ export default function SmsPage() {
       const vehicleMatch = data.messages.find(m => m.vehicle_number)?.vehicle_number ?? null
       // Count unread inbound messages — drives the unread dot in conv list.
       const unreadCount = data.messages.filter(m => m.direction === 'inbound' && !m.read_at).length
+      // Count messages still flagged for human follow-up (needs_human stays true
+      // until an admin marks the thread resolved).
+      const needsHumanCount = data.messages.filter(m => m.needs_human).length
       return {
         phone,
         displayName: inboundSender,
@@ -533,6 +535,7 @@ export default function SmsPage() {
         messageCount: data.messages.length,
         unprocessedCount,
         unreadCount,
+        needsHumanCount,
       }
     })
 
@@ -598,7 +601,7 @@ export default function SmsPage() {
     if (/\bregistration\b|\bplate\b|\baccount\b|\baccess\b/i.test(text)) return 'account-profile'
     // Fall back to action-based
     if (action.includes('pim')) return 'pim-payment'
-    if (action === 'reboot_driver' || action === 'clear_dispatch' || action === 'clear_app_data') return 'tablet-app'
+    if (action === 'reboot_driver') return 'tablet-app'
     return 'general'
   }
 
@@ -831,11 +834,35 @@ export default function SmsPage() {
   }
 
   const conversations = getConversations()
+  const needsHumanTotal = conversations.filter(c => c.needsHumanCount > 0).length
   const filteredConversations = conversations.filter(c => {
+    if (showNeedsHumanOnly && c.needsHumanCount === 0) return false
     if (!searchQuery) return true
     const lower = searchQuery.toLowerCase()
     return (c.phone.includes(lower) || (c.displayName?.toLowerCase().includes(lower)))
   })
+
+  // Clear the needs-human flag on every flagged message in a thread once an
+  // admin has handled it. Optimistic local update, then a single DB write.
+  async function markResolved(phone: string) {
+    setResolvingPhone(phone)
+    const ids = messages
+      .filter(m => m.needs_human && normalizePhone(m.direction === 'inbound' ? m.sender_phone : m.recipient_phone) === phone)
+      .map(m => m.id)
+    if (ids.length === 0) { setResolvingPhone(null); return }
+    const now = new Date().toISOString()
+    setMessages(prev => prev.map(m => ids.includes(m.id) ? { ...m, needs_human: false, resolved_at: now } : m))
+    const supabase = createClient()
+    const { error } = await supabase.from('sms_messages')
+      .update({ needs_human: false, resolved_at: now }).in('id', ids)
+    if (error) {
+      toast.error('Could not mark resolved', { detail: error.message })
+      await loadMessages() // revert optimistic update from source of truth
+    } else {
+      toast.success('Marked resolved')
+    }
+    setResolvingPhone(null)
+  }
 
   const selectedConv = conversations.find(c => c.phone === selectedConversation)
 
@@ -860,6 +887,22 @@ export default function SmsPage() {
             onChange={e => setSearchQuery(e.target.value)}
             style={{ width: '100%', fontSize: 12, padding: '6px 8px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--bg3)' }}
           />
+          {/* Needs-follow-up filter — only shown when there's something to triage,
+              or when the filter is already on (so the user can turn it off). */}
+          {(needsHumanTotal > 0 || showNeedsHumanOnly) && (
+            <button
+              onClick={() => setShowNeedsHumanOnly(v => !v)}
+              className="btn-sm"
+              style={{
+                fontSize: 11, fontWeight: 600, textAlign: 'left', cursor: 'pointer',
+                borderRadius: 'var(--radius)', padding: '6px 8px',
+                border: `1px solid ${showNeedsHumanOnly ? 'var(--amber)' : 'var(--border)'}`,
+                background: showNeedsHumanOnly ? 'var(--amber-bg)' : 'var(--bg3)',
+                color: showNeedsHumanOnly ? 'var(--amber)' : 'var(--text2)',
+              }}>
+              {showNeedsHumanOnly ? '✓ ' : '⚠ '}Needs follow-up ({needsHumanTotal})
+            </button>
+          )}
         </div>
 
         {pollMsg && (
@@ -920,6 +963,11 @@ export default function SmsPage() {
                     {new Date(conv.lastMessage.received_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
+                {conv.needsHumanCount > 0 && (
+                  <div style={{ display: 'inline-block', fontSize: 10, fontWeight: 700, color: 'var(--amber)', background: 'var(--amber-bg)', border: '1px solid var(--amber)', borderRadius: 999, padding: '1px 7px', marginBottom: 4 }}>
+                    ⚠ Needs follow-up
+                  </div>
+                )}
                 {conv.vehicleMatch && (
                   <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>
                     {formatPhone(conv.phone)}
@@ -1272,6 +1320,24 @@ export default function SmsPage() {
                   </div>
                 )
               })()}
+              {/* Escalation banner — shown when this thread is flagged for human
+                  follow-up (Claude set needs_human, or an auto-reply failed).
+                  "Mark resolved" clears the flag and removes it from the queue. */}
+              {selectedConv && selectedConv.needsHumanCount > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderRadius: 12, background: 'var(--amber-bg)', border: '1px solid var(--amber)', marginBottom: 8 }}>
+                  <span style={{ fontSize: 14 }}>⚠️</span>
+                  <span style={{ fontSize: 12, color: 'var(--amber)', fontWeight: 600, flex: 1 }}>
+                    Flagged for human follow-up.
+                  </span>
+                  <button
+                    className="btn-sm"
+                    onClick={() => markResolved(selectedConv.phone)}
+                    disabled={resolvingPhone === selectedConv.phone}
+                    style={{ fontSize: 11, fontWeight: 600, cursor: 'pointer', borderRadius: 'var(--radius)', padding: '5px 10px', border: '1px solid var(--amber)', background: 'transparent', color: 'var(--amber)' }}>
+                    {resolvingPhone === selectedConv.phone ? '…' : 'Mark resolved'}
+                  </button>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
 

@@ -19,7 +19,7 @@ The PIM connection has dropped. The driver tablet shows red where it should be g
 ### Credit Card Machine Not Working
 The PIM is powered on but won't process card transactions.
 - **Driver says:** "credit card machine not working," "can't charge with card," "the tap doesn't work," "card reader says connecting"
-- **Action:** `reboot_pim` → if persists, `clear_pim_bt` (Bluetooth reset)
+- **Action:** `reboot_pim`. If it persists after a reboot, escalate for an office visit — there is no remote Bluetooth/app reset.
 - **Expected fix time:** 2-5 minutes
 
 ### PIM Screen Frozen / Off / Dark
@@ -49,14 +49,11 @@ Battery dead or power supply disconnected. Common cause: plug under the steering
    │   └─ NO → Reply: "What's your cab number?"
    │
 2. Driver confirms still not working after reboot
-   ├─ Try clear_pim_bt (Bluetooth reset)
-   ├─ Reply: "Trying a Bluetooth reset now. Give it another few minutes."
-   │
-3. Still not working after BT reset
    ├─ Ask: "Can you check if the cable under the steering wheel is plugged in tight?"
    │
-4. Still not working
-   └─ Reply: "Looks like this needs a hands-on fix. Please bring the cab to the office [when office is open]."
+3. Still not working
+   └─ Escalate (needs_human). Reply: "Looks like this needs a hands-on fix. Please bring the cab to the office [when office is open]."
+      Do NOT promise a Bluetooth reset or app clear — those aren't available.
 ```
 
 ## Response Templates
@@ -65,7 +62,7 @@ Battery dead or power supply disconnected. Common cause: plug under the steering
 "Sending a PIM reboot to cab {vehicle_number} now. Give it 2-3 minutes to come back online and let me know if it's working."
 
 **English — After first reboot failed:**
-"Let me try a Bluetooth reset on the PIM. Give it a few more minutes. If it still doesn't work, check the power cable under the steering wheel."
+"Thanks for confirming. Can you check the power cable under the steering wheel is plugged in tight? If it still won't work, I'll flag it for the team to take a hands-on look."
 
 **English — Escalation:**
 "This one probably needs a hands-on look. Can you bring the cab to the office? We'll get the PIM swapped out."
@@ -74,7 +71,7 @@ Battery dead or power supply disconnected. Common cause: plug under the steering
 "Enviando reinicio del PIM al taxi {vehicle_number}. Dale 2-3 minutos y avísame si funciona."
 
 **Spanish — After first reboot failed:**
-"Voy a intentar un reinicio de Bluetooth en el PIM. Espera unos minutos más. Si sigue sin funcionar, revisa el cable de alimentación debajo del volante."
+"Gracias por confirmar. ¿Puedes revisar que el cable de alimentación debajo del volante esté bien conectado? Si sigue sin funcionar, lo reporto al equipo para una revisión en persona."
 
 **Spanish — Escalation:**
 "Parece que necesita revisión en persona. ¿Puedes traer el taxi a la oficina? Te lo arreglamos."

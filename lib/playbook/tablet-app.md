@@ -17,8 +17,8 @@ Driver can't log into the DriveMate app. May see "unable to contact dispatch" me
 ### App Crash / Freeze
 DriveMate closes unexpectedly or tablet becomes unresponsive.
 - **Driver says:** "app has been crash," "app closes," "tablet frozen," "tablet not responding," "DriveMate not working"
-- **Action:** `reboot_driver` → if persists, `clear_dispatch` (clear DriveMate app data)
-- **Escalation:** If clearing app data doesn't fix it, suggest office visit
+- **Action:** `reboot_driver`
+- **Escalation:** If a reboot doesn't fix it, suggest an office visit. (There is no remote app-data clear — never tell the driver you cleared anything.)
 
 ### Tablet Dark / Blank / Wrong Screen
 Screen is black, very dim, or showing Android home screen instead of DriveMate.
@@ -29,8 +29,8 @@ Screen is black, very dim, or showing Android home screen instead of DriveMate.
 ### Tablet Needs Full Reset
 Driver has tried restarting but the problem persists. Tablet may be in a bad state.
 - **Driver says:** "I already tried restarting," "reset didn't work," "still the same after reboot"
-- **Action:** `clear_dispatch` (clears DriveMate app data and forces re-login)
-- **Escalation:** If clearing app data fails → office visit for possible re-imaging or device swap
+- **Action:** If a reboot has already been tried and failed, escalate — set `needs_human`. Do NOT promise a remote reset or app-data clear; those aren't available.
+- **Escalation:** Office visit for possible re-imaging or device swap
 
 ## Resolution Flow
 
@@ -41,11 +41,8 @@ Driver has tried restarting but the problem persists. Tablet may be in a bad sta
    │   └─ NO → Ask for cab number
    │
 2. Still not working after reboot
-   ├─ Send clear_dispatch (clears DriveMate app data)
-   ├─ Reply: "Cleared the app data. You'll need to sign in again when it comes back up."
-   │
-3. Still not working after app data clear
-   └─ Suggest office visit for device inspection
+   └─ Escalate (needs_human) and suggest an office visit for device inspection.
+      Do NOT claim you cleared app data or did a remote reset — those aren't available.
 ```
 
 ## Response Templates
@@ -54,7 +51,7 @@ Driver has tried restarting but the problem persists. Tablet may be in a bad sta
 "Sending a reboot to your tablet now (cab {vehicle_number}). Give it about 3 minutes to restart and try signing in again."
 
 **English — After reboot failed:**
-"Let me clear the DriveMate app data. It'll take a minute, and you'll need to sign back in when it comes up."
+"Thanks for trying that. I've flagged this for the team to follow up — it may need a hands-on look at the office."
 
 **English — Escalation:**
 "Sounds like the tablet might need to be looked at in person. Can you bring the cab by the office?"

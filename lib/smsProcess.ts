@@ -26,16 +26,14 @@ import { sendEscalationEmail } from '@/lib/email'
  * Mirrors the client-side `resolveM360Action` in app/(app)/sms/page.tsx.
  */
 /**
- * Map SMS action → M360 API action. Only two actions are currently configured:
- * reboot_driver and reboot_pim. All others (clear_pim_bt, clear_dispatch,
- * kiosk_*, support_*) are NOT yet wired up and return null so they never fire.
+ * Map SMS action → M360 API action. Reboot is the only verified remote action,
+ * so only reboot_driver and reboot_pim map; everything else returns null and
+ * never fires.
  */
 function resolveM360Action(smsAction: string): { m360Action: string; isPim: boolean } | null {
   switch (smsAction) {
     case 'reboot_driver': return { m360Action: 'reboot', isPim: false }
     case 'reboot_pim':    return { m360Action: 'reboot', isPim: true }
-    // clear_pim_bt, clear_dispatch, kiosk_enter, kiosk_exit, support_* are
-    // intentionally unmapped — not yet configured in the portal.
     default:              return null
   }
 }
@@ -46,10 +44,8 @@ function resolveM360Action(smsAction: string): { m360Action: string; isPim: bool
  */
 function humanizeM360Action(m360Action: string, isPim: boolean): string {
   switch (m360Action) {
-    case 'reboot':         return isPim ? 'PIM Reboot' : 'Driver Tablet Reboot'
-    case 'clear_dispatch': return 'Clear Dispatch App'
-    case 'clear_pim_bt':   return 'Clear PIM Bluetooth'
-    default:               return (isPim ? 'PIM ' : 'Driver ') + m360Action.replace(/_/g, ' ')
+    case 'reboot': return isPim ? 'PIM Reboot' : 'Driver Tablet Reboot'
+    default:       return (isPim ? 'PIM ' : 'Driver ') + m360Action.replace(/_/g, ' ')
   }
 }
 
@@ -66,7 +62,7 @@ Extract structured data from their message.
 ALWAYS evaluate NoP and NoM first before exploring any other issue. These are the most common driver problems and the most critical to classify correctly. Do not start diagnosing other issues (dispatch, Uber, account, signal, etc.) until you have ruled out NoP and NoM.
 
 - "NoP" / "no P" / "no payment" / "payment not working" / "card not working" / "credit card down" / "back tablet says NoP" → PIM (back-seat tablet) issue → action="reboot_pim" with confidence="high"
-- "NoM" / "no meter" / "meter not working" / "meter is off" / "meter issue" / "metro doesn't work" → METER (physical device, separate from the PIM). NOT remote-fixable. A driver-tablet reboot MAY help but confirm with the driver first. Use action="support_driver" with confidence="low" so a human triages.
+- "NoM" / "no meter" / "meter not working" / "meter is off" / "meter issue" / "metro doesn't work" → METER (physical device, separate from the PIM). NOT remote-fixable. A driver-tablet reboot MAY help but confirm with the driver first. Use action="unknown" with confidence="low" so a human triages.
 - "no money" is AMBIGUOUS — some drivers mean the PIM's "NoM" screen (payment backend down), others literally mean the meter is broken. Use confidence="low" and action="unknown" so a human triages.
 - The METER and the PIM are DIFFERENT devices. NEVER select reboot_pim for a meter complaint, and NEVER assume PIM when the message references the meter.
 
@@ -78,10 +74,10 @@ ALWAYS evaluate NoP and NoM first before exploring any other issue. These are th
 - If a previous message in this same thread already resolved the cab number, keep using it. Only override the cab number if THIS message explicitly states a different cab (e.g. "switching to cab 7211"). Stray digits in a follow-up message are not a cab change.
 - If the message is NOT in English, translate it to English and detect the language.
 
-IMPORTANT — only two actions are currently configured for remote execution:
+IMPORTANT — only two remote actions exist. There is NO other remote action available:
 - "reboot_driver" — reboot the driver (front) tablet
 - "reboot_pim" — reboot the PIM (back-seat) tablet
-All other actions ("kiosk_enter", "kiosk_exit", "clear_dispatch", "clear_pim_bt", "support_driver", "support_pim") are NOT yet configured and must NOT be used. If the issue doesn't call for one of the two reboots, use "unknown" and set needs_human to true.
+There is no "clear app data", "clear dispatch", "clear Bluetooth", "kiosk", "wipe", or "remote support" action. NEVER tell a driver you have cleared, reset, wiped, or remotely supported anything — you cannot. If the issue doesn't call for one of the two reboots, use "unknown" and set needs_human to true so a person follows up.
 
 Confidence guidelines — be DECISIVE. If the driver's message clearly describes one of the two reboot scenarios (NoP/payment → reboot_pim, frozen/unresponsive tablet → reboot_driver), set confidence to "high" even if the wording is informal or in another language. Reserve "low" only for genuinely ambiguous messages where you truly cannot tell what the driver needs.
 
@@ -665,7 +661,7 @@ export async function processInboundSms(svc: Svc, input: ProcessInput): Promise<
   //   Fires only when:
   //   - A keyword rule matched (high-confidence intent)
   //   - The rule's primary action is in the Claude-allowed set
-  //     (reboot / clear_dispatch / clear_pim_bt — see lib/maas360Exec.ts)
+  //     (reboot — see lib/maas360Exec.ts)
   //   - The vehicle resolved via phone → fleet_overview → device_id
   //
   //   The Execute Actions kill-switch in the Claude button popover
@@ -923,10 +919,7 @@ function loadMainPlaybook(): string {
  */
 const ACTION_CATEGORY_MAP: Record<string, string> = {
   'reboot_pim':      'pim-payment.md',
-  'clear_pim_bt':    'pim-payment.md',
   'reboot_driver':   'tablet-app.md',   // default for driver reboot
-  'clear_dispatch':  'tablet-app.md',
-  'clear_app_data':  'tablet-app.md',
   'unknown':         'index.md',        // fallback: full playbook
 }
 
@@ -1384,19 +1377,23 @@ async function handleClaudeConversation(
 
   const result = await generateDriverReply(svc, senderPhone, smsText, images, m360Just)
   if (!result.reply) {
-    await svc.from('sms_messages').update({
+    await updateInboundSafe(svc, inboundId, {
       claude_status: 'failed',
       result: result.error ? `Claude: ${result.error}` : 'Claude did not produce a reply',
-    }).eq('id', inboundId)
+      needs_human: true,
+      escalated_at: new Date().toISOString(),
+    })
     return { sent: false, error: result.error ?? 'no_reply' }
   }
 
   const sendResult = await sendSms(senderPhone, result.reply)
   if (!sendResult.success) {
-    await svc.from('sms_messages').update({
+    await updateInboundSafe(svc, inboundId, {
       claude_status: 'failed',
       result: `Claude reply generated but send failed: ${sendResult.error ?? 'unknown'}`,
-    }).eq('id', inboundId)
+      needs_human: true,
+      escalated_at: new Date().toISOString(),
+    })
     return { sent: false, error: sendResult.error ?? 'twilio_send_failed' }
   }
 
@@ -1513,8 +1510,34 @@ async function handleClaudeConversation(
     } catch { /* best-effort — don't fail the reply because of logging */ }
   }
 
-  await svc.from('sms_messages').update({ claude_status: 'replied' }).eq('id', inboundId)
+  // Persist the escalation flag so the inbox "Needs follow-up" queue can show
+  // this thread. needs_human=true means Claude replied but flagged it for a
+  // human (the escalation email above is fire-and-forget; this is the durable,
+  // queryable surface). Only flip the flag ON here — clearing it is an explicit
+  // admin "Mark resolved" action in the inbox.
+  const finalUpdate: Record<string, unknown> = { claude_status: 'replied' }
+  if (result.needsHuman) {
+    finalUpdate.needs_human = true
+    finalUpdate.escalated_at = new Date().toISOString()
+  }
+  await updateInboundSafe(svc, inboundId, finalUpdate)
   return { sent: true, error: null }
+}
+
+/**
+ * Update an inbound sms_messages row, gracefully retrying without the
+ * escalation columns if migration 048 hasn't been applied yet (mirrors the
+ * column-fallback pattern used elsewhere in this file).
+ */
+async function updateInboundSafe(svc: Svc, id: string, update: Record<string, unknown>): Promise<void> {
+  let { error } = await svc.from('sms_messages').update(update).eq('id', id)
+  if (error && /needs_human|escalated_at|resolved_at/i.test(error.message)) {
+    const { needs_human, escalated_at, resolved_at, ...legacy } = update
+    const retry = await svc.from('sms_messages').update(legacy).eq('id', id)
+    error = retry.error
+    console.warn('[smsProcess] needs_human columns missing \u2014 run migration 048')
+  }
+  if (error) console.error('[smsProcess] failed to update inbound row:', error.message)
 }
 
 export { normalizePhone as _normalizePhoneForWebhook, handleClaudeConversation, generateDriverReply, selectCategoryPlaybook }

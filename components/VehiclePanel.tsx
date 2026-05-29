@@ -13,22 +13,15 @@ function shortOs(s: string | null | undefined) {
   return s ? s.replace(/^Android\s*/i, '').replace(/\s*\(.*\)/, '').trim() || null : null
 }
 
+// Reboot is the only remote action verified against the MaaS360 API. Other
+// actions (clear data, kiosk, support, wipe) were removed because they could
+// not be verified — a production portal shouldn't show buttons that do nothing.
 const DRIVER_ACTIONS = [
-  { action: 'reboot',         label: 'Reboot',         danger: false },
-  { action: 'clear_dispatch', label: 'Clear Dispatch',  danger: false },
-  { action: 'clear_app_data', label: 'Clear Cache',     danger: false },
-  { action: 'support_driver', label: 'Support',         danger: false },
-  { action: 'wipe',           label: 'Wipe',            danger: true  },
+  { action: 'reboot', label: 'Reboot', danger: false },
 ] as const
 
 const PIM_ACTIONS = [
-  { action: 'reboot',         label: 'Reboot',          danger: false },
-  { action: 'kiosk_enter',    label: 'Kiosk On',        danger: false },
-  { action: 'kiosk_exit',     label: 'Kiosk Off',       danger: false },
-  { action: 'clear_pim_bt',   label: 'Clear BT',        danger: false },
-  { action: 'clear_app_data', label: 'Clear Cache',     danger: false },
-  { action: 'support_pim',    label: 'Support',         danger: false },
-  { action: 'wipe',           label: 'Wipe',            danger: true  },
+  { action: 'reboot', label: 'Reboot', danger: false },
 ] as const
 
 // ── Shared UI ──────────────────────────────────────────────────────────────
@@ -63,7 +56,6 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
   const [tab,        setTab]        = useState<PanelTab>('vehicle')
   const [loadingAct, setLoadingAct] = useState<string | null>(null)
   const [actResults, setActResults] = useState<Record<string, { ok: boolean; msg: string }>>({})
-  const [wipeKey,    setWipeKey]    = useState<string | null>(null)
   const [noteLog,    setNoteLog]    = useState<NoteEntry[]>(() => {
     try { return v.notes ? JSON.parse(v.notes) : [] } catch { return v.notes ? [{ text: v.notes, ts: '' }] : [] }
   })
@@ -81,12 +73,11 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
   async function act(action: string, deviceId: string | null, prefix: string) {
     if (!deviceId) return
     const key = `${prefix}-${action}`
-    if (action === 'wipe' && wipeKey !== key) { setWipeKey(key); return }
-    setLoadingAct(key); setWipeKey(null)
+    setLoadingAct(key)
     try {
       const res  = await fetch('/api/maas360/action', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, deviceId, vehicleNumber: v.vehicle_number, confirmed: action === 'wipe' || undefined })
+        body: JSON.stringify({ action, deviceId, vehicleNumber: v.vehicle_number })
       })
       const data = await res.json()
       setActResults(p => ({ ...p, [key]: { ok: data.success, msg: data.message ?? data.error ?? 'Done' } }))
@@ -174,18 +165,17 @@ export default function VehiclePanel({ vehicle: v, onClose, onSaved }: Props) {
           const key     = `${prefix}-${a.action}`
           const busy    = loadingAct === key
           const res     = actResults[key]
-          const pending = wipeKey === key
           return (
             <button key={a.action} onClick={() => act(a.action, deviceId, prefix)}
               disabled={loadingAct !== null}
               title={res ? res.msg : a.label}
               style={{
                 fontSize: 12, padding: '5px 12px', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
-                border: `1px solid ${res ? (res.ok ? 'var(--green)' : 'var(--red)') : pending ? 'var(--red)' : a.danger ? 'rgba(231,76,60,0.4)' : 'var(--border)'}`,
-                background: res ? (res.ok ? 'var(--green-bg)' : 'var(--red-bg)') : pending ? 'var(--red-bg)' : 'var(--bg3)',
-                color: res ? (res.ok ? 'var(--green)' : 'var(--red)') : pending ? 'var(--red)' : a.danger ? 'var(--red)' : 'var(--text2)',
+                border: `1px solid ${res ? (res.ok ? 'var(--green)' : 'var(--red)') : a.danger ? 'rgba(231,76,60,0.4)' : 'var(--border)'}`,
+                background: res ? (res.ok ? 'var(--green-bg)' : 'var(--red-bg)') : 'var(--bg3)',
+                color: res ? (res.ok ? 'var(--green)' : 'var(--red)') : a.danger ? 'var(--red)' : 'var(--text2)',
               }}>
-              {busy ? '…' : pending ? '⚠ confirm' : a.label}
+              {busy ? '…' : a.label}
             </button>
           )
         })}
