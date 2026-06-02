@@ -20,6 +20,59 @@ import { ASC_FLEETS } from '@/lib/filters'
 import { executeM360Action, isClaudeAllowedAction, type ExecM360Result } from '@/lib/maas360Exec'
 import { sendEscalationEmail } from '@/lib/email'
 
+// ── Authoritative office details ──────────────────────────────────────────────
+//
+// The ONLY office address and hours the bot is permitted to give a driver.
+// These are the single source of truth: they are injected into the
+// conversational system prompt AND enforced by a pre-send guard
+// (screenReplyForUnauthorizedContact) so a fabricated address/hours can never
+// reach a driver. Update these two constants if the office ever moves — nothing
+// else hard-codes a location.
+//
+// Background: on 2026-06-01 the bot invented "2035 Stoner Ave" (and varied the
+// real address/hours on other days) because there was no source of truth and
+// only a weak "don't invent addresses" instruction. This block + the guard fix
+// that.
+const OFFICE_ADDRESS = '2050 W 190th St, Torrance, CA 90504'
+const OFFICE_HOURS = '8am–4pm, Monday–Friday (closed weekends)'
+// Exact line the bot must use when a driver asks for contact/location info it is
+// not authorized to give (anything beyond the office address + hours above).
+const CONTACT_FALLBACK = 'I am not permitted to assist any further'
+
+/**
+ * Pre-send safety guard. Returns a short reason string if the proposed reply
+ * contains contact information the bot is NOT authorized to send — any street
+ * address other than OFFICE_ADDRESS, any clock time outside OFFICE_HOURS, or any
+ * phone number / email address. Returns null when the reply is clean.
+ *
+ * This is a hard backstop independent of the prompt: even if the model ignores
+ * its instructions, a fabricated address/hours/contact is replaced with
+ * CONTACT_FALLBACK and the thread is escalated before anything is sent.
+ */
+function screenReplyForUnauthorizedContact(text: string): string | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[.,]/g, '').replace(/\s+/g, ' ').trim()
+  const allowedAddr = norm(OFFICE_ADDRESS)
+
+  // Street-address pattern: number + 1-4 words + a street suffix.
+  const addrRe = /\b\d{1,5}\s+(?:[A-Za-z0-9.]+\s+){0,4}(?:st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|way|ln|lane|ct|court|pl|place|hwy|highway|ste|suite)\b/gi
+  for (const m of text.matchAll(addrRe)) {
+    if (!allowedAddr.includes(norm(m[0]))) return 'address'
+  }
+
+  // Clock times (e.g. "7am", "3:30 pm"). Only the authorized hours are allowed.
+  const timeRe = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi
+  for (const m of text.matchAll(timeRe)) {
+    const t = m[0].toLowerCase().replace(/\s+/g, '')
+    if (t !== '8am' && t !== '4pm') return 'hours'
+  }
+
+  // Phone numbers and emails should never be emitted to a driver.
+  if (/\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/.test(text)) return 'phone'
+  if (/\b[\w.+-]+@[\w-]+\.[\w.-]+\b/.test(text)) return 'email'
+
+  return null
+}
+
 /**
  * Map the SMS-facing `intent.action` (e.g. 'reboot_pim') onto the M360 API
  * action verb ('reboot') plus a flag telling us which device_id to look up.
@@ -978,14 +1031,19 @@ Before exploring any other issue, determine whether the driver is describing NoP
 
 # What you must NOT do — anti-hallucination
 You have very limited authoritative knowledge. EVERYTHING below is forbidden:
-- Do NOT invent or quote office hours, business hours, support hours, "open until X", "available at Y", etc. — even vague timing claims like "around 9 AM" are off-limits unless they appear verbatim in the playbook. Say "shortly" or "during business hours" without specifics.
-- Do NOT invent or quote phone numbers, email addresses, mailing addresses, or any contact information. The driver already has the right number — they just texted it. If they need a different contact, set needs_human = true and say "I'll have the team reach out."
+- The office address and hours are FIXED values, provided in the "# Office location & hours" section below. When a driver asks where to go / for the address / for hours, give EXACTLY those values — never a different street, suite number, city, or set of hours. Do NOT invent, paraphrase, round, or "remember" any other address or hours.
+- Do NOT invent or quote phone numbers, email addresses, or any other contact information. The driver already has the right number — they just texted it. For any contact/location request you cannot answer with the office address + hours below, reply with EXACTLY this line and nothing else: "${CONTACT_FALLBACK}" — and set needs_human = true.
 - Do NOT name specific people (dispatchers, managers, IT staff, owners). You don't know who is on duty. Say "the IT team" or "the support team."
 - Do NOT invent troubleshooting steps that aren't in the playbook above. If the playbook doesn't cover the issue, acknowledge it and escalate (needs_human = true). Better to escalate than to send a confidently wrong fix.
 - Do NOT claim you have executed any action other than what the system tells you happened in the "An action was JUST executed" block (if present). Specifically: never claim you rebooted anything unless that block confirms it.
 - Do NOT promise specific repair times ("in 10 minutes", "by tomorrow", "this afternoon"). Use "shortly" or "we will follow up."
 - Do NOT make up information about driver accounts, payouts, lease fees, schedules, vacation policy, deductions, fees, vehicle assignments, or anything administrative. ALL administrative questions get needs_human = true.
 - Do NOT send more than one SMS per reply. Keep replies under ~320 characters when possible so they fit in 2 SMS segments.
+
+# Office location & hours (AUTHORITATIVE — the ONLY values you may give)
+- Address: ${OFFICE_ADDRESS}
+- Hours: ${OFFICE_HOURS}
+These two lines are the ONLY office address and hours you may ever state. If a driver asks where to go, what the address is, or what the hours are, reply with exactly these values. If asked for anything else about contacting or visiting the office (a phone number, an email, a specific person, a different location, directions to a non-office place), do NOT guess — reply with exactly "${CONTACT_FALLBACK}" and set needs_human = true.
 
 # When to set needs_human = true
 Default to escalating unless the situation is clearly inside your wheelhouse. Specifically set needs_human = true for ANY of:
@@ -1386,6 +1444,18 @@ async function handleClaudeConversation(
     return { sent: false, error: result.error ?? 'no_reply' }
   }
 
+  // Pre-send safety guard: never let a fabricated address / hours / phone /
+  // email reach a driver, regardless of what the model produced. If the reply
+  // contains unauthorized contact info, replace it with the fixed fallback line
+  // and escalate so a human follows up.
+  const leak = screenReplyForUnauthorizedContact(result.reply)
+  if (leak) {
+    console.warn(`[smsProcess] blocked unauthorized ${leak} in Claude reply (inbound=${inboundId}); sending fallback + escalating`)
+    result.reply = CONTACT_FALLBACK
+    result.needsHuman = true
+    result.reason = `Blocked unauthorized ${leak}; escalated to human`
+  }
+
   const sendResult = await sendSms(senderPhone, result.reply)
   if (!sendResult.success) {
     await updateInboundSafe(svc, inboundId, {
@@ -1488,14 +1558,11 @@ async function handleClaudeConversation(
   }
 
   // If Claude flagged this as a known-issue reply, log a note in the Rylo Tracker
-  // with the cab number so Shan and the ops team have a trail.
+  // with the cab number so the ops team has a trail.
   if (result.reason?.includes('log_known_issue') || result.reason?.includes('known_issue')) {
     try {
       const cabNum = vehicleNumber ?? null
       const noteText = `[Auto-logged] Driver${cabNum ? ` (cab #${cabNum})` : ''} reported a known issue via SMS: "${smsText.slice(0, 100)}"`
-      // Find the first open issue to attach the note to. If multiple issues exist,
-      // we attach to the highest-priority one — the driver's message is likely about
-      // the most impactful known problem.
       const { data: topIssue } = await svc.from('issues')
         .select('id, notes_log')
         .eq('status', 'open')
@@ -1511,10 +1578,8 @@ async function handleClaudeConversation(
   }
 
   // Persist the escalation flag so the inbox "Needs follow-up" queue can show
-  // this thread. needs_human=true means Claude replied but flagged it for a
-  // human (the escalation email above is fire-and-forget; this is the durable,
-  // queryable surface). Only flip the flag ON here — clearing it is an explicit
-  // admin "Mark resolved" action in the inbox.
+  // this thread. Only flip the flag ON here — clearing it is an explicit admin
+  // "Mark resolved" action in the inbox.
   const finalUpdate: Record<string, unknown> = { claude_status: 'replied' }
   if (result.needsHuman) {
     finalUpdate.needs_human = true
@@ -1535,7 +1600,7 @@ async function updateInboundSafe(svc: Svc, id: string, update: Record<string, un
     const { needs_human, escalated_at, resolved_at, ...legacy } = update
     const retry = await svc.from('sms_messages').update(legacy).eq('id', id)
     error = retry.error
-    console.warn('[smsProcess] needs_human columns missing \u2014 run migration 048')
+    console.warn('[smsProcess] needs_human columns missing - run migration 048')
   }
   if (error) console.error('[smsProcess] failed to update inbound row:', error.message)
 }
