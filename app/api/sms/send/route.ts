@@ -16,26 +16,41 @@ export async function POST(req: NextRequest) {
 
   const result = await sendSms(to, body)
 
-  // Store outbound message in sms_messages table
+  // Store the outbound message so it shows in the inbox thread.
   const svc = createServiceClient()
-  // Prefer phone number for display; fall back to messaging service SID
-  const fromNumber = getTwilioNumber() || getMessagingServiceSid()
+  const fromNumber = getTwilioNumber() || getMessagingServiceSid() || 'Fleet Portal'
   const phoneNorm = to.replace(/\D/g, '').replace(/^1(\d{10})$/, '$1')
 
-  await svc.from('sms_messages').insert({
+  // gmail_id is NOT NULL (legacy column) — every insert must supply a unique
+  // value. `result` is a TEXT column, so store a string, not an object.
+  const row = {
+    gmail_id: `manual_reply_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     sender: 'Fleet Portal',
     sender_phone: fromNumber,
     sms_text: body,
     direction: 'outbound',
+    source: 'twilio',
+    twilio_sid: result.sid ?? null,
     recipient_phone: phoneNorm,
+    action: 'manual_reply',
+    is_claude_reply: false,
     processed: true,
     success: result.success,
-    result: result.success ? { sid: result.sid } : { error: result.error },
+    result: result.success ? 'Manual reply sent' : `Manual reply failed: ${result.error ?? 'unknown'}`,
     received_at: new Date().toISOString(),
-  })
+  }
+
+  let { error: insErr } = await svc.from('sms_messages').insert(row)
+  // Graceful fallback if optional columns are missing on this DB.
+  if (insErr && /direction|source|twilio_sid|recipient_phone|is_claude_reply|action/i.test(insErr.message)) {
+    const { direction, source, twilio_sid, recipient_phone, is_claude_reply, action, ...legacy } = row
+    const retry = await svc.from('sms_messages').insert(legacy)
+    insErr = retry.error
+  }
+  if (insErr) console.error('[sms/send] failed to store outbound row:', insErr.message)
 
   if (result.success) {
-    return NextResponse.json({ success: true, sid: result.sid })
+    return NextResponse.json({ success: true, sid: result.sid, stored: !insErr })
   } else {
     return NextResponse.json({ error: result.error, success: false }, { status: 502 })
   }

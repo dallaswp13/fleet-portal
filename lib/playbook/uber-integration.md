@@ -4,7 +4,7 @@
 
 ## What Is Happening
 
-Yellow Cab drivers can receive Uber ride requests through their dispatch tablet. The Uber integration runs as part of the DriveMate app. When it fails, drivers lose access to Uber fares — a significant income source.
+Yellow Cab drivers can receive Uber ride requests through their dispatch tablet. The Uber integration runs as part of the Dispatch app. When it fails, drivers lose access to Uber fares — a significant income source.
 
 ## Sub-Types
 
@@ -12,7 +12,7 @@ Yellow Cab drivers can receive Uber ride requests through their dispatch tablet.
 The Uber indicator shows green (active) but driver isn't receiving any Uber ride requests.
 - **Driver says:** "Uber green but no calls," "not receiving any uber calls," "uber is on but nothing comes through," "uber toggle green for 2 days no calls"
 - **Action:** `reboot_driver` → if persists, this may be an Uber-side account issue (not fixable via MDM)
-- **Note:** This became more common in early 2026. Multiple drivers reporting it simultaneously could indicate a system-wide integration issue — flag for Dallas.
+- **Note:** This became more common in early 2026. Multiple drivers reporting it simultaneously could indicate a system-wide integration issue — flag for the fleet manager (set needs_human).
 
 ### Uber Offer Failed
 Driver receives Uber requests but they fail when accepted.

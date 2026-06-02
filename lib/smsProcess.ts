@@ -33,7 +33,7 @@ import { sendEscalationEmail } from '@/lib/email'
 // real address/hours on other days) because there was no source of truth and
 // only a weak "don't invent addresses" instruction. This block + the guard fix
 // that.
-const OFFICE_ADDRESS = '2050 W 190th St, Torrance, CA 90504'
+const OFFICE_ADDRESS = '2050 W 190th St, Ste 100, Torrance, CA 90504'
 const OFFICE_HOURS = '8am–4pm, Monday–Friday (closed weekends)'
 // Exact line the bot must use when a driver asks for contact/location info it is
 // not authorized to give (anything beyond the office address + hours above).
@@ -78,6 +78,27 @@ function screenReplyForUnauthorizedContact(text: string): string | null {
  * action verb ('reboot') plus a flag telling us which device_id to look up.
  * Mirrors the client-side `resolveM360Action` in app/(app)/sms/page.tsx.
  */
+/**
+ * Runtime office-hours context for the conversational prompt. Lets the bot
+ * avoid telling a driver to come to the office when it is closed (office
+ * hours are 8am-4pm, Monday-Friday, America/Los_Angeles).
+ */
+function buildOfficeTimeBlock(): string {
+  try {
+    const now = new Date()
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', hour: '2-digit', hourCycle: 'h23' }).formatToParts(now)
+    const wd = parts.find(p => p.type === 'weekday')?.value ?? ''
+    const hr = parseInt(parts.find(p => p.type === 'hour')?.value ?? '0', 10)
+    const open = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(wd) && hr >= 8 && hr < 16
+    const nice = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true }).format(now)
+    return `\n\n# Current time (Pacific)\nIt is ${nice}. The office is currently ${open ? 'OPEN' : 'CLOSED'}. ` + (open
+      ? 'It is within office hours, so a driver you direct to the office may go now.'
+      : 'The office is CLOSED right now — do NOT tell the driver to come now. If they need in-person help, tell them to come during office hours (8am–4pm, Monday–Friday).')
+  } catch {
+    return ''
+  }
+}
+
 /**
  * Map SMS action → M360 API action. Reboot is the only verified remote action,
  * so only reboot_driver and reboot_pim map; everything else returns null and
@@ -138,7 +159,7 @@ If the driver attached a PHOTO, examine it carefully for:
 - Red/green status indicator lights: NOP (red = PIM down → reboot_pim), NOM (red = meter down → reboot_driver), AOK (green = healthy)
 - Error messages or dialog boxes on the tablet screen
 - Blank, dark, or frozen screens
-- The DriveMate dispatch app interface
+- The Dispatch app interface
 - The PIM payment screen in the back seat
 - Any visible cab number on the screen or dashboard
 Describe what you see in the "reason" field, then classify based on the visual evidence combined with any text message.
@@ -1008,13 +1029,13 @@ function selectCategoryPlaybook(action: string, messageText: string): string {
 
 const CONVERSATION_SYSTEM_PROMPT = `You are an AI IT support assistant for LA Yellow Cab's fleet.
 
-You are texting with a taxi driver who is having trouble with their in-vehicle equipment. Your job is to help them resolve the issue on their own, or to confirm their request has been received so a human can follow up.
+You are texting with a taxi driver who is having trouble with their in-vehicle equipment. Your job is to help the driver resolve the issue themselves over text. If it cannot be resolved over text, tell them to come to the office IN PERSON during office hours. We do NOT call drivers back, so never promise that anyone will contact them.
 
 # Diagnose NoP vs NoM FIRST
 Before exploring any other issue, determine whether the driver is describing NoP or NoM. These two issues are the most common and they have very different fixes — guessing wrong sends the driver to the wrong device. If you cannot tell from the first message, ask a SHORT clarifying question (e.g. "Is the back-seat tablet showing red NoP, or is the meter near the steering wheel not working?") before suggesting anything else.
 
 - NoP = back-seat PIM (Passenger Information Monitor) cannot accept card payments. The PIM shows a red NOP indicator or the message "no payment". Standard fix: reboot the PIM.
-- NoM = the meter (a separate physical device near the driver's dash, NOT the tablet) is not working. NoM is generally NOT remote-fixable; confirm with the driver and escalate to a human. A driver-tablet reboot can sometimes help but only after confirming.
+- NoM = the meter (a separate physical device near the driver's dash, NOT the tablet) is not working. NoM is generally NOT remote-fixable; confirm with the driver, then tell them to come to the office in person during office hours (set needs_human). A driver-tablet reboot can sometimes help but only after confirming.
 - The METER (NoM) and the PIM (NoP) are DIFFERENT devices. Never suggest a PIM reboot for a meter complaint, and never suggest the driver "reboot the meter" — they can't.
 
 # Equipment in the vehicle
@@ -1026,19 +1047,22 @@ Before exploring any other issue, determine whether the driver is describing NoP
 # What you CAN do
 - Acknowledge the driver's issue in a warm, concise tone.
 - Give troubleshooting steps from the playbook (e.g. "hold the power button 10 seconds, then power on").
-- Confirm you have logged the issue and that the IT team will follow up if self-help doesn't resolve it.
+- If self-help doesn't resolve it, tell the driver to bring the vehicle to the office IN PERSON during office hours. Never say that anyone will contact them.
 - Ask a SHORT clarifying question if the issue is genuinely unclear (which device? driver tablet or PIM?).
 
 # What you must NOT do — anti-hallucination
 You have very limited authoritative knowledge. EVERYTHING below is forbidden:
 - The office address and hours are FIXED values, provided in the "# Office location & hours" section below. When a driver asks where to go / for the address / for hours, give EXACTLY those values — never a different street, suite number, city, or set of hours. Do NOT invent, paraphrase, round, or "remember" any other address or hours.
 - Do NOT invent or quote phone numbers, email addresses, or any other contact information. The driver already has the right number — they just texted it. For any contact/location request you cannot answer with the office address + hours below, reply with EXACTLY this line and nothing else: "${CONTACT_FALLBACK}" — and set needs_human = true.
-- Do NOT name specific people (dispatchers, managers, IT staff, owners). You don't know who is on duty. Say "the IT team" or "the support team."
+- Do NOT name specific people (dispatchers, managers, IT staff, owners). Refer generically to "the office," and never imply they will contact the driver.
 - Do NOT invent troubleshooting steps that aren't in the playbook above. If the playbook doesn't cover the issue, acknowledge it and escalate (needs_human = true). Better to escalate than to send a confidently wrong fix.
 - Do NOT claim you have executed any action other than what the system tells you happened in the "An action was JUST executed" block (if present). Specifically: never claim you rebooted anything unless that block confirms it.
-- Do NOT promise specific repair times ("in 10 minutes", "by tomorrow", "this afternoon"). Use "shortly" or "we will follow up."
+- Do NOT promise specific repair times ("in 10 minutes", "by tomorrow", "this afternoon"), and do NOT say "we'll follow up" or that anyone will get back to them. If it can't be fixed over text, direct the driver to the office during office hours.
 - Do NOT make up information about driver accounts, payouts, lease fees, schedules, vacation policy, deductions, fees, vehicle assignments, or anything administrative. ALL administrative questions get needs_human = true.
 - Do NOT send more than one SMS per reply. Keep replies under ~320 characters when possible so they fit in 2 SMS segments.
+- Do NOT tell a driver that anyone — the team, IT, dispatch, the office, or a person — will call, text, email, reach out, follow up, or get back to them. We do NOT contact drivers back. If an issue can't be resolved over text, tell them to come to the office IN PERSON during office hours.
+- Do NOT tell a driver to come to the office "now" or imply it is open at this moment. Always frame it as coming during office hours (8am–4pm, Monday–Friday); if the office is currently closed, make clear they should come during the next business hours.
+- Our main dispatch app is the "Dispatch app." "DriveMate" is a SEPARATE app we do NOT support — never call the Dispatch app "DriveMate." If a driver asks for help with DriveMate, tell them you cannot help with DriveMate; if they still need help, they can come to the office in person during office hours.
 
 # Office location & hours (AUTHORITATIVE — the ONLY values you may give)
 - Address: ${OFFICE_ADDRESS}
@@ -1055,7 +1079,7 @@ Default to escalating unless the situation is clearly inside your wheelhouse. Sp
 - After 2 of YOUR replies in a row the issue isn't resolved.
 - You don't recognize the issue or aren't confident your reply is correct. Better to escalate than fabricate.
 
-When you set needs_human = true, the inbox will email the fleet manager with the full thread. Your reply to the driver should still be helpful and brief — confirm you've flagged it for follow-up.
+When you set needs_human = true, the inbox emails the fleet manager internally — this is NOT visible to the driver and does NOT mean anyone will contact the driver. Your reply to the driver should be brief and, if the issue is unresolved, direct them to come to the office in person during office hours. Never tell the driver someone will follow up or reach out.
 
 # Photos / MMS
 Drivers frequently send photos of their tablet screens. If a photo is attached, examine it carefully:
@@ -1323,10 +1347,11 @@ async function generateDriverReply(
 A "${m360Just.label}" command was sent to MaaS360 ${m360Just.success ? 'and succeeded' : 'but the API call FAILED'} a moment ago, BEFORE you write your reply.
 ${m360Just.success
   ? `Tell the driver you have initiated the ${m360Just.label.toLowerCase()} and they should wait 2-3 minutes for the tablet to come back up. Be brief and confident. Do NOT tell them to do it themselves — it is already happening.`
-  : `Apologize that the automatic ${m360Just.label.toLowerCase()} did not go through and tell the driver you have escalated it to the IT team. Set needs_human = true.`}`
+  : `Apologize that the automatic ${m360Just.label.toLowerCase()} did not go through, and tell the driver to bring the vehicle to the office in person during office hours. Do NOT say anyone will contact them. Set needs_human = true.`}`
     : ''
 
-  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock + m360Block
+  const officeTimeBlock = buildOfficeTimeBlock()
+  const systemPrompt = CONVERSATION_SYSTEM_PROMPT + playbookBlock + contextBlock + lessonsBlock + knownIssuesBlock + m360Block + officeTimeBlock
 
   // Build message list from history, then append current user message.
   // The current message may include images (MMS) — use vision content blocks.

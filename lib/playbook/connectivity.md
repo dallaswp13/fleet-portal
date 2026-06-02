@@ -24,7 +24,7 @@ Location services not working. Tablet can't show zones or navigate.
 Connection works then drops repeatedly. One driver reported it happening daily around 6 PM.
 - **Driver says:** "the app goes off for a minute," "keeps going on and off," "connection drops during rides"
 - **Action:** `reboot_driver`
-- **Note:** If multiple drivers report drops at the same time, it's likely a server-side or carrier issue, not device-level. Flag for Dallas.
+- **Note:** If multiple drivers report drops at the same time, it's likely a server-side or carrier issue, not device-level. Flag for the fleet manager (set needs_human).
 
 ## Resolution Flow
 

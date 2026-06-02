@@ -27,12 +27,12 @@ Driver can't view their earnings or balance on the tablet.
 ### Access Paratransit Sign-In
 Issues specifically with the Access (paratransit) dispatch integration.
 - **Driver says:** "Access sign-in not working," "can't connect to Access dispatch," "Access has been two weeks issue"
-- **Action:** Access issues often require coordination with Access dispatch. Escalate to Dallas.
+- **Action:** Access issues often require coordination with Access dispatch. Escalate (set needs_human).
 - **Note:** Some drivers do both Yellow Cab and Access rides. Access integration problems are separate from regular dispatch.
 
-### DriveMate Account Locked / Suspended
+### Dispatch Account Locked / Suspended
 Driver's dispatch account is suspended or locked, preventing sign-in.
-- **Driver says:** "when can I sign back on," "my account is locked," "can't log in to DriveMate"
+- **Driver says:** "when can I sign back on," "my account is locked," "can't log in to Dispatch"
 - **Action:** This is an admin/HR issue, not technical. Escalate.
 
 ## Resolution Flow
@@ -41,7 +41,7 @@ Driver's dispatch account is suspended or locked, preventing sign-in.
 1. Registration expired → Escalate (database update needed)
 2. Plate update → Note new plate, escalate
 3. Balance issue → Try reboot_driver, then office
-4. Access issue → Escalate to Dallas
+4. Access issue → Escalate (needs_human)
 5. Account locked → Escalate (admin/HR decision)
 ```
 
