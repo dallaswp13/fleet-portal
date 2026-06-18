@@ -39,6 +39,12 @@ const OFFICE_HOURS = '8am–4pm, Monday–Friday (closed weekends)'
 // not authorized to give (anything beyond the office address + hours above).
 const CONTACT_FALLBACK = 'I am not permitted to assist any further'
 
+// Anthropic model for SMS intent parsing + conversational replies. Overridable
+// via env so a model retirement is a one-line config change, not an outage.
+// Claude Sonnet 4 (claude-sonnet-4-20250514) was RETIRED 2026-06-15; the current
+// Sonnet is claude-sonnet-4-6.
+const SMS_MODEL = process.env.ANTHROPIC_SMS_MODEL || 'claude-sonnet-4-6'
+
 /**
  * Pre-send safety guard. Returns a short reason string if the proposed reply
  * contains contact information the bot is NOT authorized to send — any street
@@ -251,7 +257,7 @@ async function parseWithClaude(smsText: string, images?: FetchedImage[]): Promis
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: SMS_MODEL,
         max_tokens: 500,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userContent }],
@@ -1370,7 +1376,7 @@ ${m360Just.success
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: SMS_MODEL,
         max_tokens: 500,
         system: systemPrompt,
         messages,
