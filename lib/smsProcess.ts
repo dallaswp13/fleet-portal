@@ -46,6 +46,21 @@ const CONTACT_FALLBACK = 'I am not permitted to assist any further'
 const SMS_MODEL = process.env.ANTHROPIC_SMS_MODEL || 'claude-sonnet-4-6'
 
 /**
+ * Tolerantly pull a JSON object out of an LLM response. Handles ```json fences
+ * and stray prose around the object. Returns null if no valid object is found
+ * (callers then fall back). Returns `any` so callers index fields freely, as
+ * they did with JSON.parse.
+ */
+function parseLlmJson(raw: string): any {
+  if (!raw) return null
+  const cleaned = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim()
+  try { return JSON.parse(cleaned) } catch { /* fall through */ }
+  const m = cleaned.match(/\{[\s\S]*\}/)
+  if (m) { try { return JSON.parse(m[0]) } catch { /* fall through */ } }
+  return null
+}
+
+/**
  * Pre-send safety guard. Returns a short reason string if the proposed reply
  * contains contact information the bot is NOT authorized to send — any street
  * address other than OFFICE_ADDRESS, any clock time outside OFFICE_HOURS, or any
@@ -265,7 +280,7 @@ async function parseWithClaude(smsText: string, images?: FetchedImage[]): Promis
     })
     const data = await res.json()
     const raw = data.content?.[0]?.text?.trim() ?? '{}'
-    const parsed = JSON.parse(raw.replace(/^```json\s*/, '').replace(/\s*```$/, ''))
+    const parsed = parseLlmJson(raw) ?? {}
     return {
       action: parsed.action ?? 'unknown',
       vehicle_number: parsed.vehicle_number || extractVehicleNumber(smsText),
@@ -1388,20 +1403,25 @@ ${m360Just.success
     }
     const data = await res.json()
     const raw = (data.content?.[0]?.text ?? '').trim()
-    const json = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '')
-    const parsed = JSON.parse(json)
-    const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : ''
-    if (!reply) {
-      return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'Empty reply from Claude', needsHuman: true, error: 'empty_reply' }
+    const parsed = parseLlmJson(raw)
+    if (parsed && typeof parsed.reply === 'string' && parsed.reply.trim()) {
+      return {
+        reply: parsed.reply.trim(),
+        replyEnglish:   typeof parsed.reply_english   === 'string' ? parsed.reply_english.trim()   : '',
+        sourceLanguage: typeof parsed.source_language === 'string' ? parsed.source_language.trim() : '',
+        reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+        needsHuman: parsed.needs_human === true,
+        error: null,
+      }
     }
-    return {
-      reply,
-      replyEnglish:   typeof parsed.reply_english   === 'string' ? parsed.reply_english.trim()   : '',
-      sourceLanguage: typeof parsed.source_language === 'string' ? parsed.source_language.trim() : '',
-      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
-      needsHuman: parsed.needs_human === true,
-      error: null,
+    // Fallback: the model replied in plain text instead of the JSON envelope
+    // (common for simple acknowledgements like "Glad it's working!"). If it is
+    // prose — not a malformed JSON object — send it as-is rather than failing.
+    const stripped = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim()
+    if (stripped && !stripped.startsWith('{')) {
+      return { reply: stripped, replyEnglish: '', sourceLanguage: '', reason: 'Plain-text reply (no JSON envelope); sent as-is', needsHuman: false, error: null }
     }
+    return { reply: '', replyEnglish: '', sourceLanguage: '', reason: 'Empty reply from Claude', needsHuman: true, error: 'empty_reply' }
   } catch (err) {
     return {
       reply: '',
