@@ -1,8 +1,33 @@
-.next/
+# Dependencies
 node_modules/
-.env.local
-.env
-*.log
-.DS_Store
+
+# Next.js / build output
+.next/
 dist/
 out/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.local
+.env*.local
+*.pem
+# OAuth / credential dumps (e.g. _tools/Claude Intent Parser)
+client_secret*.json
+token.json
+token.txt
+cred.txt
+
+# Logs / OS
+*.log
+.DS_Store
+
+# Local tooling & raw data exports (secrets, media, business data) — keep local
+_tools/
+
+# docs/: keep markdown, ignore binary/sensitive documents
+docs/*.docx
+docs/*.pdf
+docs/*.xlsx
+docs/*.xls
+docs/*.csv
