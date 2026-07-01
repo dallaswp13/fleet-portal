@@ -28,7 +28,6 @@ TypeScript · Anthropic Claude API · MaaS360 API · Vercel · _(database: add)_
 
 ## Screenshots
 <img width="1916" height="908" alt="Screenshot 2026-07-01 122910" src="https://github.com/user-attachments/assets/769e0387-cbb0-4015-824d-72b32880b61d" />
-<img width="1917" height="907" alt="Screenshot 2026-07-01 122847" src="https://github.com/user-attachments/assets/01a235e2-540f-40b2-9473-856f0c91e431" />
 
 
 ## Local setup
