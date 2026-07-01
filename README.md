@@ -27,7 +27,15 @@ Driver text → MaaS360 integration → LLM (Anthropic Claude) classifies intent
 TypeScript · Anthropic Claude API · MaaS360 API · Vercel · _(database: add)_
 
 ## Screenshots
-_Add 2–3 screenshots (chat flow, dashboard) here — screenshots carry a private/visual project far._
+<img width="1916" height="908" alt="Screenshot 2026-07-01 122910" src="https://github.com/user-attachments/assets/769e0387-cbb0-4015-824d-72b32880b61d" />
+<img width="1917" height="907" alt="Screenshot 2026-07-01 122847" src="https://github.com/user-attachments/assets/01a235e2-540f-40b2-9473-856f0c91e431" />
+
 
 ## Local setup
-_Document env vars and run steps here. **Never commit real keys or driver data** — use a gitignored `.env` and demo data only._
+ANTHROPIC_API_KEY  
+RESEND_API_KEY  
+EMAIL_FROM  
+ESCALATION_TO  
+SUPABASE_JWT_SECRET  
+MAAS360_BASE_URL  
+TWILIO_PHONE_NUMBER  
